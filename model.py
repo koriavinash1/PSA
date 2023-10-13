@@ -368,8 +368,10 @@ class SlotAttentionWithPositions(nn.Module):
                                 nn.Linear(self.key_dim, self.key_dim),
                             )
         else:
+            hidden_dim = (self.embedding_dim + self.key_dim)//2
+
             self.init_slot_transformation = nn.Sequential(
-                            nn.Linear(input_dim , hidden_dim),
+                            nn.Linear(self.embedding_dim , hidden_dim),
                             nn.ReLU(),
                             nn.Linear(hidden_dim, self.key_dim),
                         )
@@ -411,13 +413,9 @@ class SlotAttentionWithPositions(nn.Module):
 
 
         if self.variational_slots:
-            if features is None:
-                slots_loc = torch.zeros(nsamples, self.key_dim, device = device)
-                slots_logscale = torch.ones(nsamples, self.key_dim, device = device)
-            else:
-                features = features.flatten(-2, -1).mean(-1) 
-                slots_loc = self.slots_loc(features)
-                slots_logscale = self.slots_logscale(features)
+            features = features.flatten(-2, -1).mean(-1) 
+            slots_loc = self.slots_loc(features)
+            slots_logscale = self.slots_logscale(features)
         else:
             slots_loc = self.slots_loc.expand(nsamples, -1)
             slots_logscale = self.slots_logscale.expand(nsamples, -1)
@@ -444,7 +442,7 @@ class SlotAttentionWithPositions(nn.Module):
 
         b, n, c = features_loc.shape
         xslot = (features_loc.unsqueeze(1) + (0.5*features_logscale).exp().unsqueeze(1) * torch.randn(
-                                    b, nslots, n, c, device=x.device)).mean(2)
+                                    b, nslots, n, c, device=features_loc.device)).mean(2)
 
         return self.init_slot_transformation(xslot)
 
@@ -528,7 +526,7 @@ class SlotAttentionWithPositions(nn.Module):
 
         if hasattr(self, 'conditioning'):
             _, num_slots, _ = slots.shape
-            slots = self.conditioning(torch.cat(slots, properties[:, :num_slots, :], dim = 2))
+            slots = self.conditioning(torch.cat([slots, properties[:, :num_slots, :].to(slots.device)], dim = 2))
 
 
         # ========================
@@ -572,7 +570,6 @@ class SlotAutoEncoder(nn.Module):
                             args.channels[-1],
                             bottleneck,
                             2 * args.channels[-1],
-                            kernel_size=k,
                             residual=False,
                             version=args.vr,
                         )
@@ -596,7 +593,7 @@ class SlotAutoEncoder(nn.Module):
                 
             elif (args.zprior == 'gauss'):
                 
-                if self.lean_prior:
+                if self.learn_prior:
                     self.mu_p_z = nn.Parameter(torch.zeros(1, self.latent_dim, res, res), 
                                                         requires_grad=True)
                     nn.init.xavier_normal_(self.mu_p_z)
@@ -629,11 +626,16 @@ class SlotAutoEncoder(nn.Module):
     def _mixture_kl_loss(self, z: Tensor, loc: Tensor, logscale: Tensor):
         # loc, scale: B x ds
         # slots: B x K x ds
+
+        z = z.permute(0, 2, 3, 1).flatten(1, 2)
+        loc = loc.permute(0, 2, 3, 1).flatten(1, 2)
+        logscale = logscale.permute(0, 2, 3, 1).flatten(1, 2)
+
         b, k, c = z.shape
 
-        z = z.view(-1, z.shape[-1]) #treat each slot independent from others
-        loc = loc.view(-1, z.shape[-1])
-        logscale = logscale.view(-1, z.shape[-1])
+        z = z.flatten(0, 1) #treat each slot independent from others
+        loc = loc.flatten(0, 1)
+        logscale = logscale.flatten(0, 1)
 
         scale = torch.exp(0.5 * logscale)
         q_z = dist.Normal(loc, scale)
@@ -658,10 +660,8 @@ class SlotAutoEncoder(nn.Module):
         # compute E_{q(z,c|x)}[log p(c)]
         log_prob_E_p_c = torch.sum(q_c_x * torch.log(self.pi_p_c).unsqueeze(0), dim=1)
 
-        
-        KL_z = (log_prob_E_qz_x - log_prob_E_pz_c).view(b, c, k, 1)
-        KL_c = (log_prob_E_q_c_x - log_prob_E_p_c).view(b, c, k, 1)
-
+        KL_z = (log_prob_E_qz_x - log_prob_E_pz_c).view(b, k, 1, 1)
+        KL_c = (log_prob_E_q_c_x - log_prob_E_p_c).view(b, k, 1, 1)
 
         KL = KL_z + KL_c 
    
@@ -671,10 +671,10 @@ class SlotAutoEncoder(nn.Module):
     
     def get_latents(self, h: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
 
-        loc, logscale = self.posterior(h)
+        loc, logscale = self.posterior(h).chunk(2, dim=1)
         z = loc + (0.5*logscale).exp()*torch.randn_like(loc)
 
-        if self.zprior == 'gmm':
+        if self.zprior_type == 'gmm':
             kl_loss = self._mixture_kl_loss(z, loc, logscale)
         else:
             kl_loss = gaussian_kl(loc, logscale, self.mu_p_z, self.logscale_p_z)
@@ -709,7 +709,6 @@ class SlotAutoEncoder(nn.Module):
         if hasattr(self, 'posterior'):
             h, h_loc, h_logscale, kl_loss = self.get_latents(h)
             stats.append(dict(kl=kl_loss))
-
 
         zs, attn, slot_kl_loss = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
         stats.append(dict(kl=slot_kl_loss))
@@ -752,13 +751,13 @@ class SlotAutoEncoder(nn.Module):
         # only in when self.variational_latents is True
 
         def __vae_latents__():
-            z_dist = dist.Normal(loc = torch.zeros_like(self.latent_dim, self.res, self.res), 
-                                    scale= torch.ones_like(self.latent_dim, self.res, self.res))
+            z_dist = dist.Normal(loc = torch.zeros(self.latent_dim, self.res, self.res), 
+                                    scale= torch.ones(self.latent_dim, self.res, self.res))
             z_samples = z_dist.sample((nsamples,)).to(device)
 
             return z_samples
 
-        if not self.gmm:
+        if not (self.zprior_type == 'gmm'):
             h = __vae_latents__()
         else:
             if self.num_components == 1:
@@ -766,27 +765,27 @@ class SlotAutoEncoder(nn.Module):
             
             if not per_component:
                 l_p_c = torch.log_softmax(self.pi_p_c, dim=-1)
-                p_c = td.one_hot_categorical.OneHotCategorical(logits=l_p_c)
+                p_c = dist.one_hot_categorical.OneHotCategorical(logits=l_p_c)
                 c_samples = p_c.sample((nsamples * self.res * self.res, )).to(device)
 
                 loc = c_samples @ self.mu_p_z
-                scale = c_samples @ torch.exp(0.5 * self.log_sigma_square_p_z)
-                pz_c = td.normal.Normal(loc=loc, scale=scale)
+                scale = c_samples @ torch.exp(0.5 * self.logscale_p_z)
+                pz_c = dist.Normal(loc=loc, scale=scale)
                 h = pz_c.sample().to(device)
                 h = h.view(nsamples, self.latent_dim, self.res, self.res)
             else:
                 c_samples = torch.tensor(np.eye(self.num_components, dtype=np.float32)).to(device)
                 loc = c_samples @ self.mu_p_z
-                scale = c_samples @ torch.exp(0.5 * self.log_sigma_square_p_z)
-                pz_c = td.normal.Normal(loc=loc, scale=scale)
+                scale = c_samples @ torch.exp(0.5 * self.logscale_p_z)
+                pz_c = dist.Normal(loc=loc, scale=scale)
                 h = pz_c.sample((nsamples * self.res * self.res,))
                 h = h.view(nsamples, self.latent_dim, self.res, self.res)
 
-        h_loc, h_logscale = None, None 
+        h_loc, h_logscale = torch.zeros_like(h), torch.ones_like(h) 
         zs, attn_maps, _ = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
 
         latents = self.decoder(zs)
-        xh, recons, masks = self.slotpixel_competition(bs, latents)
+        xh, recons, masks = self.slotpixel_competition(nsamples, latents)
         return self.likelihood.sample(xh, return_loc, t=t), recons, masks, attn_maps
 
 

@@ -237,6 +237,7 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
 
     # original imgs, channels last, [0,255]
     orig = (batch["x"].permute(0, 2, 3, 1) + 1.0) * 127.5
+    device = orig.device
     # properties = batch['properties']
     orig = orig.detach().cpu().numpy().astype(np.uint8)
     viz_images = [orig]
@@ -310,7 +311,10 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
     if args.model in ['VSA', 'VASA', 'SSA', 'SSAU']:
         nsamples = orig.shape[0]
         for temp in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
-            x_rec, recons, masks, attn = model.sample(nsamples, return_loc=True, t=temp)
+            (x_rec, _), recons, masks, attn = model.sample(nsamples, 
+                                                            device = device, 
+                                                            properties = batch['properties'], 
+                                                            return_loc=True, t=temp)
             x_rec = postprocess(x_rec)
 
             _, kslots, ntokens = attn.shape 
@@ -330,8 +334,9 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
                 viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
 
             viz_images.append(orig * 0)
-            viz_images.append(x_rec.astype(np.uint8))
 
+            viz_images.append(x_rec.astype(np.uint8))
+            viz_images.append(orig * 0)
 
     # zero pad each row to have same number of columns for plotting
     for j, img in enumerate(viz_images):

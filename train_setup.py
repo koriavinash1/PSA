@@ -8,13 +8,16 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from datasets import clevr
+from datasets import clevr, clevr_hans
 from hps import Hparams
 from utils import linear_warmup, seed_worker
 
 
 def setup_dataloaders(args: Hparams) -> Dict[str, DataLoader]:
-    if "clevr" in args.hps:
+
+    if "clevr_hans" in args.hps:
+        datasets = clevr_hans(args)
+    elif "clevr" in args.hps:
         datasets = clevr(args)
     else:
         NotImplementedError
@@ -47,8 +50,8 @@ def setup_optimizer(
     return optimizer, scheduler
 
 
-def setup_directories(args: Hparams, ckpt_dir: str = "checkpoints") -> str:
-    save_dir = os.path.join(ckpt_dir, args.exp_name)
+def setup_directories(args: Hparams) -> str:
+    save_dir = os.path.join(args.ckpt_dir, args.exp_name)
     if os.path.isdir(save_dir):
         if (
             input(f"\nSave directory '{save_dir}' already exists, overwrite? [y/N]: ")

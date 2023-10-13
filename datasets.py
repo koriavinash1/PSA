@@ -18,6 +18,11 @@ from tqdm import tqdm
 from hps import Hparams
 
 
+import json, random
+from pathlib import Path
+from tqdm import tqdm
+
+
 
 def get_paths_with_properties_CLEVR(root_path, mode, max_objects=7):
     size_mapping = {'large': 0, 'small': 1}
@@ -270,7 +275,7 @@ def clevr(args: Hparams) -> Dict[str, CLEVRN]:
             torchvision.datasets.CLEVRClassification(
                 root=args.data_dir,
                 split=split,
-                download=True
+                download=False
             ),
             num_obj=args.max_num_obj,
             transform=aug[split],
@@ -286,7 +291,7 @@ def clevr(args: Hparams) -> Dict[str, CLEVRN]:
 
 
 
-def clevr_hans(args: Hparams) -> Dict[str, CLEVRN]:
+def clevr_hans(args: Hparams) -> Dict[str, DataGenerator]:
     # Load data
     n = args.input_res * 0.004296875  # = 0.55 for 128
     h, w = int(320 * n), int(480 * n)

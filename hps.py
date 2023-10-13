@@ -31,6 +31,7 @@ clevr_hans.update(clevr.__dict__)
 clevr_hans.nconditions = 19
 clevr_hans.max_num_obj = 10
 clevr_hans.nslots = 10
+clevr_hans.data_dir = '/vol/biomedic2/agk21/PhDLogs/datasets/CLEVR/CLEVR-Hans3'
 HPARAMS_REGISTRY["clevr_hans"] = clevr_hans
 
 
@@ -39,6 +40,11 @@ def setup_hparams(parser: argparse.ArgumentParser) -> Hparams:
     hparams = Hparams()
     args = parser.parse_known_args()[0]
     valid_args = set(args.__dict__.keys())
+    
+
+    if (args.nconditions > 0) and (args.model == 'SSAU'):
+        args.hps = "clevr_hans"
+
     hparams_dict = HPARAMS_REGISTRY[args.hps].__dict__
     for k in hparams_dict.keys():
         if k not in valid_args:
@@ -237,6 +243,13 @@ def add_arguments(parser: argparse.ArgumentParser):
         help="Initial std for x scale. 0 is random.",
         type=float,
         default=0.0,
+    )
+
+    parser.add_argument(
+        "--ckpt_dir",
+        help="Directory to save logs.",
+        type=str,
+        default='./checkpoints',
     )
 
 
