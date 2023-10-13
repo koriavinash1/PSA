@@ -1,0 +1,15 @@
+torch
+torchvision
+geomstats
+pymatting
+scikit-learn
+scipy
+numpy 
+pandas
+tqdm
+pytorch-fid
+einops
+opencv-python
+matplotlib
+tensorboard
+timm==0.6.7
