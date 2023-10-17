@@ -96,7 +96,7 @@ def add_arguments(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--epochs", 
         help="Training epochs.", 
-        type=int, default=500
+        type=int, default=5000
     )
     parser.add_argument(
         "-bs",

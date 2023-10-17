@@ -210,6 +210,7 @@ class DGaussNet(nn.Module):
             else:
                 NotImplementedError(f"{args.x_like} not implemented.")
 
+    
     def forward(
         self, h: Tensor, x: Optional[Tensor] = None, t: Optional[float] = None
     ) -> Tuple[Tensor, Tensor]:

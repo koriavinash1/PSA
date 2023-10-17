@@ -262,16 +262,20 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
     _, kslots, ntokens = attn.shape 
 
     # slot_recons
+    # for ik in range(kslots):
+    #     recon_slot = recons[:, ik, ...]
+    #     recon_slot, _ = model.likelihood(recon_slot) 
+    #     slots = recon_slot * masks[:, ik, ...]
+    #     slots = slots.permute(0, 2, 3, 1)
+    #     viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
+
+    # viz_images.append(orig * 0)
+
+
     for ik in range(kslots):
-        slots = recons[:, ik, ...] * masks[:, ik, ...]
-        slots = slots.permute(0, 2, 3, 1)
-        viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
-
-    viz_images.append(orig * 0)
-
-
-    for ik in range(kslots):
-        slots = recons[:, ik, ...] * masks[:, ik, ...] + (1 - masks[:, ik, ...])
+        recon_slot = recons[:, ik, ...]
+        recon_slot, _ = model.likelihood(recon_slot)
+        slots = recon_slot * masks[:, ik, ...] + (1 - masks[:, ik, ...])
         slots = slots.permute(0, 2, 3, 1)
         viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
 
@@ -288,14 +292,14 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
     attn = attn.repeat_interleave(h // h_enc, dim=-2).repeat_interleave(w // w_enc, dim=-1)
     attn = attn.detach().cpu().numpy()
     
-    for ik in range(kslots):
-        attn_viz = attn[:, ik, :, :][:, :, :, None]
-        attn_viz = attn_viz*orig
-        attn_viz = normalize(attn_viz)
+    # for ik in range(kslots):
+    #     attn_viz = attn[:, ik, :, :][:, :, :, None]
+    #     attn_viz = attn_viz*orig
+    #     attn_viz = normalize(attn_viz)
 
-        viz_images.append((attn_viz).astype(np.uint8))
+    #     viz_images.append((attn_viz).astype(np.uint8))
         
-    viz_images.append(orig * 0)
+    # viz_images.append(orig * 0)
 
     for ik in range(kslots):
         attn_viz = attn[:, ik, :, :][:, :, :, None]
@@ -320,12 +324,12 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
             _, kslots, ntokens = attn.shape 
 
             # slot_recons
-            for ik in range(kslots):
-                slots = recons[:, ik, ...] * masks[:, ik, ...]
-                slots = slots.permute(0, 2, 3, 1)
-                viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
+            # for ik in range(kslots):
+            #     slots = recons[:, ik, ...] * masks[:, ik, ...]
+            #     slots = slots.permute(0, 2, 3, 1)
+            #     viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
 
-            viz_images.append(orig * 0)
+            # viz_images.append(orig * 0)
 
 
             for ik in range(kslots):
