@@ -26,14 +26,53 @@ clevr.channels = [16, 32, 64, 128]
 HPARAMS_REGISTRY["clevr"] = clevr
 
 
-clevr_hans = Hparams()
-clevr_hans.update(clevr.__dict__)
-clevr_hans.nconditions = 19
-clevr_hans.max_num_obj = 10
-clevr_hans.nslots = 10
-clevr_hans.data_dir = '/vol/biomedic2/agk21/PhDLogs/datasets/CLEVR/CLEVR-Hans3'
-HPARAMS_REGISTRY["clevr_hans"] = clevr_hans
+clevr_hans3 = Hparams()
+clevr_hans3.update(clevr.__dict__)
+clevr_hans3.nconditions = 19
+clevr_hans3.max_num_obj = 10
+clevr_hans3.nslots = 10
+clevr_hans3.data_dir = '/vol/biomedic2/agk21/PhDLogs/datasets/CLEVR/CLEVR-Hans3'
+HPARAMS_REGISTRY["clevr_hans3"] = clevr_hans3
 
+
+clevr_hans7 = Hparams()
+clevr_hans7.update(clevr.__dict__)
+clevr_hans7.nconditions = 19
+clevr_hans7.max_num_obj = 10
+clevr_hans7.nslots = 10
+clevr_hans7.data_dir = '/vol/biomedic2/agk21/PhDLogs/datasets/CLEVR/CLEVR-Hans7'
+HPARAMS_REGISTRY["clevr_hans7"] = clevr_hans7
+
+
+
+bitmoji = Hparams()
+bitmoji.update(clevr.__dict__)
+bitmoji.max_num_obj = 9
+bitmoji.nslots = 7
+bitmoji.data_dir = '/vol/biomedic3/agk21/datasets/bitmoji'
+HPARAMS_REGISTRY["bitmoji"] = bitmoji
+
+
+
+objects_room = Hparams()
+objects_room.update(clevr.__dict__)
+objects_room.max_num_obj = 8
+objects_room.nslots = 7
+objects_room.data_dir = '/vol/biomedic3/agk21/datasets/multi-objects/RawData-subset/objects_room/default'
+HPARAMS_REGISTRY["objects_room"] = objects_room
+
+
+ffhq = Hparams()
+ffhq.update(clevr.__dict__)
+ffhq.max_num_obj = 9
+ffhq.input_res = 128
+ffhq.nslots = 7
+ffhq.enc_arch = "128b2d2,64b2d2,32b2d2,16b1d2,8b1d8"
+ffhq.dec_arch = "8b2,16b2,32b2,64b2,128b2"
+ffhq.slot_arch = "16s7,64s3"
+ffhq.channels = [16, 32, 64, 128, 256]
+ffhq.data_dir = '/vol/biomedic2/agk21/PhDLogs/datasets/FFHQ/data'
+HPARAMS_REGISTRY["ffhq"] = ffhq
 
 
 def setup_hparams(parser: argparse.ArgumentParser) -> Hparams:

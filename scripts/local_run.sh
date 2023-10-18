@@ -1,6 +1,6 @@
-CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSAU_zp_gauss --model SSAU --hps clevr_hans --ckpt_dir ../checkpoints_rgb_correction &
-CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSAU_zp_learngauss --learn_prior --model SSAU --hps clevr_hans --ckpt_dir ../checkpoints_rgb_correction &
-CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSAU_zp_gmm --learn_prior --zprior gmm --model SSAU --hps clevr_hans --ckpt_dir ../checkpoints_rgb_correction &
+CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSAU_zp_gauss --model SSAU --hps clevr_hans3 --ckpt_dir ../checkpoints_rgb_correction &
+CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSAU_zp_learngauss --learn_prior --model SSAU --hps clevr_hans3 --ckpt_dir ../checkpoints_rgb_correction &
+CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSAU_zp_gmm --learn_prior --zprior gmm --model SSAU --hps clevr_hans3 --ckpt_dir ../checkpoints_rgb_correction &
 
 CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSA_zp_gauss --model SSA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &
 CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSA_zp_learngauss --learn_prior --model SSA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &

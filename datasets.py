@@ -298,16 +298,15 @@ def clevr_hans(args: Hparams) -> Dict[str, DataGenerator]:
     aug = {
         "train": transforms.Compose(
             [
-                transforms.Resize((h, w), antialias=None),
+                transforms.Resize(args.input_res, antialias=None),
                 # transforms.CenterCrop(args.input_res),
-                transforms.RandomCrop(args.input_res),
                 transforms.PILToTensor(),  # (0,255)
             ]
         ),
         "val": transforms.Compose(
             [
-                transforms.Resize((h, w), antialias=None),
-                transforms.CenterCrop(args.input_res),
+                transforms.Resize(args.input_res, antialias=None),
+                # transforms.CenterCrop(args.input_res),
                 transforms.PILToTensor(),  # (0,255)
             ]
         ),
