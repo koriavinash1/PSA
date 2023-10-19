@@ -13,7 +13,7 @@ class Hparams:
 
 clevr = Hparams()
 clevr.learning_rate = 2e-4
-clevr.batch_size = 32
+clevr.batch_size = 16
 clevr.weight_decay = 0.01
 clevr.input_res = 64
 clevr.pad = 4
@@ -65,12 +65,7 @@ HPARAMS_REGISTRY["objects_room"] = objects_room
 ffhq = Hparams()
 ffhq.update(clevr.__dict__)
 ffhq.max_num_obj = 9
-ffhq.input_res = 128
 ffhq.nslots = 7
-ffhq.enc_arch = "128b2d2,64b2d2,32b2d2,16b1d2,8b1d8"
-ffhq.dec_arch = "8b2,16b2,32b2,64b2,128b2"
-ffhq.slot_arch = "16s7,64s3"
-ffhq.channels = [16, 32, 64, 128, 256]
 ffhq.data_dir = '/vol/biomedic2/agk21/PhDLogs/datasets/FFHQ/data'
 HPARAMS_REGISTRY["ffhq"] = ffhq
 
@@ -335,4 +330,8 @@ def add_arguments(parser: argparse.ArgumentParser):
         "--initial_decoder_spatial_resolution", 
         type=int,
         default=8)
+    parser.add_argument(
+        "--no_additive_decoder", 
+        action="store_true",
+        default=False)
     return parser

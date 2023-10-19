@@ -275,7 +275,7 @@ def clevr(args: Hparams) -> Dict[str, CLEVRN]:
             torchvision.datasets.CLEVRClassification(
                 root=args.data_dir,
                 split=split,
-                download=False
+                download=True
             ),
             num_obj=args.max_num_obj,
             transform=aug[split],
@@ -291,21 +291,21 @@ def clevr(args: Hparams) -> Dict[str, CLEVRN]:
 
 
 
-def clevr_hans(args: Hparams) -> Dict[str, DataGenerator]:
+def custom_loader(args: Hparams) -> Dict[str, DataGenerator]:
     # Load data
     n = args.input_res * 0.004296875  # = 0.55 for 128
     h, w = int(320 * n), int(480 * n)
     aug = {
         "train": transforms.Compose(
             [
-                transforms.Resize(args.input_res, antialias=None),
+                transforms.Resize((args.input_res, args.input_res), antialias=None),
                 # transforms.CenterCrop(args.input_res),
                 transforms.PILToTensor(),  # (0,255)
             ]
         ),
         "val": transforms.Compose(
             [
-                transforms.Resize(args.input_res, antialias=None),
+                transforms.Resize((args.input_res, args.input_res), antialias=None),
                 # transforms.CenterCrop(args.input_res),
                 transforms.PILToTensor(),  # (0,255)
             ]
@@ -315,11 +315,11 @@ def clevr_hans(args: Hparams) -> Dict[str, DataGenerator]:
     datasets = {
         split: DataGenerator(root=args.data_dir, 
                                 mode=split, 
-                                resolution=(h,w),
+                                resolution=(args.input_res, args.input_res),
                                 max_objects=args.max_num_obj,
                                 transform=aug[split],
                                 properties=args.nconditions > 0,
-                                class_info=True)
+                                class_info=False)
         for split in ["train", "val"]
     }
     # datasets['test'] = datasets.CLEVRClassification(

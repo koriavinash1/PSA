@@ -8,19 +8,20 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from datasets import clevr, clevr_hans
+from datasets import clevr, custom_loader
 from hps import Hparams
 from utils import linear_warmup, seed_worker
 
 
 def setup_dataloaders(args: Hparams) -> Dict[str, DataLoader]:
 
-    if "clevr_hans" in args.hps:
-        datasets = clevr_hans(args)
-    elif "clevr" in args.hps:
+    if args.hps == "clevr":
         datasets = clevr(args)
+    elif args.hps in ["clevr_hans3", "clevr_hans7", "bitmoji", "objects_room", "ffhq"]:
+        datasets = custom_loader(args)
     else:
         NotImplementedError
+
 
     kwargs = {
         "batch_size": args.bs,

@@ -317,7 +317,8 @@ class SlotAttentionWithPositions(nn.Module):
 
         self.embedding_dim = args.channels[-1]
 
-        
+        self.no_additive_decoder = args.no_additive_decoder
+
         self.init_spatial_resolution = args.initial_decoder_spatial_resolution
 
         self.eps = 1e-8
@@ -401,6 +402,31 @@ class SlotAttentionWithPositions(nn.Module):
         resolution = (self.init_spatial_resolution, self.init_spatial_resolution)
         self.decoder_position    = SoftPositionEmbed(self.key_dim, resolution)
 
+        if self.no_additive_decoder:
+            layers = []
+
+            nblocks = 2
+            for iconv in range(nblocks):
+                block = nn.Sequential(
+                                Block(self.key_dim,
+                                        self.key_dim,
+                                        self.key_dim,
+                                        kernel_size = 3,
+                                        residual=False,
+                                        version=args.vr,
+                                    )
+                        )
+                layers.append(block)
+
+
+            layers.append(Block(self.key_dim,
+                                        self.key_dim,
+                                        self.key_dim + 1,
+                                        kernel_size = 3,
+                                        residual=False,
+                                        version=args.vr,
+                                    ))
+            self.decode   = nn.Sequential(*layers)
 
 
     def get_stochastic_initial_slots(self, 
@@ -458,12 +484,30 @@ class SlotAttentionWithPositions(nn.Module):
         return features
 
     
+    def slotfeature_competition(self, b: int, x: Tensor) -> Tensor:
+        bk, c, h, w = x.shape
+
+        x = x.view(b, -1, c, h, w)
+        recons, masks = torch.split(x, [c-1, 1], dim=2)
+        masks = masks.softmax(dim=1)
+
+        # (b, c, h, w)
+        recon_combined = torch.sum(recons * masks, dim=1)
+        return recon_combined, recons, masks
+
 
     def decoder_transformation(self, slots: Tensor) -> Tensor:
         # features: B x nslots x dim
+        B, _, _ = slots.shape
+
         slots = slots.reshape((-1, slots.shape[-1])).unsqueeze(2).unsqueeze(3) # (B*nslots) x dim
         features = slots.repeat((1, 1, self.init_spatial_resolution, self.init_spatial_resolution))
         features = self.decoder_position(features)
+
+        if self.no_additive_decoder:
+            features = self.decode(features)
+            features, _, _ = self.slotfeature_competition(B, features)
+
         return features
 
 
@@ -558,6 +602,7 @@ class SlotAutoEncoder(nn.Module):
         self.encoder = Encoder(args)
         self.decoder = Decoder(args)
 
+        self.no_additive_decoder = args.no_additive_decoder
         self.slot_attention = SlotAttentionWithPositions(args)
 
         variational_models = ['VSA', 'VASA', 'SSA', 'SSAU']
@@ -607,10 +652,16 @@ class SlotAutoEncoder(nn.Module):
                     self.register_buffer("logscale_p_z", torch.ones(1, self.latent_dim, res, res))
            
 
-
-        self.projection = nn.Conv2d(
+        if not self.no_additive_decoder:
+            self.projection = nn.Conv2d(
                             args.channels[0], 
                             args.input_channels + 1, 
+                            kernel_size=1, stride=1
+                        )
+        else:
+            self.projection = nn.Conv2d(
+                            args.channels[0], 
+                            args.input_channels, 
                             kernel_size=1, stride=1
                         )
 
@@ -714,8 +765,12 @@ class SlotAutoEncoder(nn.Module):
         zs, attn, slot_kl_loss = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
         stats.append(dict(kl=slot_kl_loss))
 
-        h = self.decoder(zs)
-        xh, recons, masks = self.slotpixel_competition(x.shape[0], h)
+        xh = self.decoder(zs)
+        if not self.no_additive_decoder:
+            xh, recons, masks = self.slotpixel_competition(x.shape[0], xh)
+        else:
+            xh = self.projection(xh)
+
         nll_pp = self.likelihood.nll(xh, x)
 
 
@@ -785,8 +840,13 @@ class SlotAutoEncoder(nn.Module):
         h_loc, h_logscale = torch.zeros_like(h), torch.ones_like(h) 
         zs, attn_maps, _ = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
 
-        latents = self.decoder(zs)
-        xh, recons, masks = self.slotpixel_competition(nsamples, latents)
+        xh = self.decoder(zs)
+        recons = None; masks = None
+        if not self.no_additive_decoder:
+            xh, recons, masks = self.slotpixel_competition(nsamples, xh)
+        else:
+            xh = self.projection(xh)
+
         return self.likelihood.sample(xh, return_loc, t=t), recons, masks, attn_maps
 
 
@@ -807,6 +867,11 @@ class SlotAutoEncoder(nn.Module):
 
         zs, attn_maps, _ = self.slot_attention(latents, h_loc, h_logscale, properties, num_slots)
 
-        latents = self.decoder(zs)
-        xh, recons, masks = self.slotpixel_competition(bs, latents)
+        xh = self.decoder(zs)
+        recons = None; masks = None
+        if not self.no_additive_decoder:
+            xh, recons, masks = self.slotpixel_competition(bs, xh)
+        else:
+            xh = self.projection(xh)
+
         return self.likelihood.sample(xh, t=t), recons, masks, attn_maps

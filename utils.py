@@ -271,15 +271,15 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
 
     # viz_images.append(orig * 0)
 
+    if not (recons is None):
+        for ik in range(kslots):
+            recon_slot = recons[:, ik, ...]
+            recon_slot, _ = model.likelihood(recon_slot)
+            slots = recon_slot * masks[:, ik, ...] + (1 - masks[:, ik, ...])
+            slots = slots.permute(0, 2, 3, 1)
+            viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
 
-    for ik in range(kslots):
-        recon_slot = recons[:, ik, ...]
-        recon_slot, _ = model.likelihood(recon_slot)
-        slots = recon_slot * masks[:, ik, ...] + (1 - masks[:, ik, ...])
-        slots = slots.permute(0, 2, 3, 1)
-        viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
-
-    viz_images.append(orig * 0)
+        viz_images.append(orig * 0)
 
 
     # plot slots at each resolution
@@ -331,13 +331,15 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
 
             # viz_images.append(orig * 0)
 
+            if not (recons is None):
+                for ik in range(kslots):
+                    recon_slot = recons[:, ik, ...]
+                    recon_slot, _ = model.likelihood(recon_slot)
+                    slots = recon_slot * masks[:, ik, ...] + (1 - masks[:, ik, ...])
+                    slots = slots.permute(0, 2, 3, 1)
+                    viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
 
-            for ik in range(kslots):
-                slots = recons[:, ik, ...] * masks[:, ik, ...] + (1 - masks[:, ik, ...])
-                slots = slots.permute(0, 2, 3, 1)
-                viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
-
-            viz_images.append(orig * 0)
+                viz_images.append(orig * 0)
 
             viz_images.append(x_rec.astype(np.uint8))
             viz_images.append(orig * 0)
