@@ -10,10 +10,11 @@ from scipy.optimize import linear_sum_assignment
 from sklearn.metrics import adjusted_rand_score
 from typing import Callable, Dict, List, Optional, Tuple
 
-
+from torch.autograd import grad as torch_grad
 from torch import Tensor, nn
 from pytorch_fid import fid_score
 from sklearn.metrics import accuracy_score
+from mcc import slot_mean_corr_coef
 
 
 def ari(
@@ -42,7 +43,7 @@ def ari(
         )
         result.append(ari_value)
     result = torch.FloatTensor(result)  # shape (batch_size, )
-    return result
+    return result.mean()
 
 
 
@@ -58,20 +59,42 @@ def mse(
         true_image = true_image[not_bg]
         reconstruction = reconstruction[not_bg]
     
-    return ((true_image - reconstruction)**2).mean([1, 2, 3])
+    return ((true_image - reconstruction)**2).mean([1, 2, 3]).mean()
 
 
 
 def compositional_contrast(
-        mixing_fn: Callable,
-        latents: Tensor
+        latents: Tensor,
+        outputs: Tensor
 ) -> Tensor:
+    b, K, d = latents.shape
 
-    return NotImplementedError
+    cc = 0
+    for k in range(K):
+        for j in range(k, K):
+            Jk = torch_grad(outputs=outputs, 
+                            inputs=latents[:,k,:],
+                            grad_outputs=torch.ones(output.size(), 
+                                                device=latents.device),
+                            create_graph=True, 
+                            retain_graph=True, 
+                            only_inputs=True)[0].reshape(b, -1)
+
+            Jj = torch_grad(outputs=outputs, 
+                            inputs=latents[:,k,:],
+                            grad_outputs=torch.ones(output.size(), 
+                                                device=latents.device),
+                            create_graph=True, 
+                            retain_graph=True, 
+                            only_inputs=True)[0].reshape(b, -1)
+            
+            cc += (Jk.norm(2, dim=1)*Jj.norm(2, dim=1)).mean()
+
+    return cc
 
 
 def slot_mcc(
             run1_slots: Tensor,
             run2_slots: Tensor
-) -> Tensor:
-    return NotImplementedError
+    ):
+    return slot_mean_corr_coef(run1_slots, run2_slots)

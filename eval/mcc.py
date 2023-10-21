@@ -449,7 +449,7 @@ def mean_corr_coef_np(x, y, method='pearson'):
                     use Spearman's nonparametric rank correlation coefficient
     :return: float
     """
-        b, k, d = x.shape
+    b, k, d = x.shape
     y = []
 
     for i in range(b):
@@ -487,7 +487,7 @@ def mean_corr_coef_np(x, y, method='pearson'):
 
 
 
-def mean_corr_coef(x, y, method='pearson'):
+def slot_mean_corr_coef(x, y, method='pearson'):
     if type(x) != type(y):
         raise ValueError('inputs are of different types: ({}, {})'.format(type(x), type(y)))
     if isinstance(x, np.ndarray):
@@ -499,33 +499,6 @@ def mean_corr_coef(x, y, method='pearson'):
 
 
 
-def subset_mean_corr_coef(x, y, method='pearson'):
-    desired_nnodes = y.shape[1]
-    considered_nodes = np.arange(x.shape[1])
-    all_collections = list(itertools.combinations(considered_nodes, desired_nnodes))
-    
-    subset_mccs = []
-    for nodes in all_collections:
-        x_ = x[:, list(nodes)]
-        subset_mccs.append(mean_corr_coef(x_, y, method))
-       
-
-    idx = np.argmax(subset_mccs)
-    return subset_mccs[idx], all_collections[idx]
-
-
-def subset_cca_mcc(x, y, method='pearson'):
-    desired_nnodes = y.shape[1]
-    considered_nodes = np.arange(x.shape[1])
-    all_collections = list(itertools.combinations(considered_nodes, desired_nnodes))
-    
-    subset_mccs = []
-    for nodes in all_collections:
-        x_ = x[:, list(nodes)]
-        subset_mccs.append(cca_mcc(x_, y))
-
-    idx = np.argmax(subset_mccs)
-    return subset_mccs[idx], all_collections[idx]
 
 
 def mean_corr_coef_out_of_sample(x, y, x_test, y_test, method='pearson'):
