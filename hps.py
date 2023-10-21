@@ -1,4 +1,5 @@
 import argparse
+import os
 
 HPARAMS_REGISTRY = {}
 
@@ -9,6 +10,9 @@ class Hparams:
             setattr(self, k, v)
 
 
+
+HDF5_DATA_ROOT = '/vol/biomedic3/agk21/CoSA/SAModelling/Datasets'
+PNG_DATA_ROOT = '/vol/biomedic2/agk21/PhDLogs/datasets/'
 
 
 clevr = Hparams()
@@ -23,7 +27,14 @@ clevr.max_num_obj = 7
 clevr.enc_arch = "64b1d2,32b1d2,16b1d2,8b1"
 clevr.dec_arch = "8b1u2,16b1u2,32b1u2,64b1"
 clevr.channels = [16, 32, 64, 128]
+# clevr.data_dir = os.path.join(HDF5_DATA_ROOT, 'clevr_10-full.hdf5')
 HPARAMS_REGISTRY["clevr"] = clevr
+
+
+clevr_tex = Hparams()
+clevr_tex.update(clevr.__dict__)
+clevr_tex.data_dir = os.path.join(HDF5_DATA_ROOT, 'clevrtex-full.hdf5')
+HPARAMS_REGISTRY["clevr_tex"] = clevr_tex
 
 
 clevr_hans3 = Hparams()
@@ -31,7 +42,7 @@ clevr_hans3.update(clevr.__dict__)
 clevr_hans3.nconditions = 19
 clevr_hans3.max_num_obj = 10
 clevr_hans3.nslots = 10
-clevr_hans3.data_dir = '/vol/biomedic2/agk21/PhDLogs/datasets/CLEVR/CLEVR-Hans3'
+clevr_hans3.data_dir = os.path.join(PNG_DATA_ROOT, 'CLEVR/CLEVR-Hans3')
 HPARAMS_REGISTRY["clevr_hans3"] = clevr_hans3
 
 
@@ -40,8 +51,14 @@ clevr_hans7.update(clevr.__dict__)
 clevr_hans7.nconditions = 19
 clevr_hans7.max_num_obj = 10
 clevr_hans7.nslots = 10
-clevr_hans7.data_dir = '/vol/biomedic2/agk21/PhDLogs/datasets/CLEVR/CLEVR-Hans7'
+clevr_hans7.data_dir = os.path.join(PNG_DATA_ROOT, 'CLEVR/CLEVR-Hans7')
 HPARAMS_REGISTRY["clevr_hans7"] = clevr_hans7
+
+
+shapestacks = Hparams()
+shapestacks.update(clevr.__dict__)
+shapestacks.data_dir = os.path.join(HDF5_DATA_ROOT, 'shapestacks-full.hdf5')
+HPARAMS_REGISTRY["shapestacks"] = shapestacks
 
 
 
@@ -49,7 +66,7 @@ bitmoji = Hparams()
 bitmoji.update(clevr.__dict__)
 bitmoji.max_num_obj = 9
 bitmoji.nslots = 7
-bitmoji.data_dir = '/vol/biomedic3/agk21/datasets/bitmoji'
+bitmoji.data_dir = os.path.join(PNG_DATA_ROOT, 'bitmoji')
 HPARAMS_REGISTRY["bitmoji"] = bitmoji
 
 
@@ -58,15 +75,36 @@ objects_room = Hparams()
 objects_room.update(clevr.__dict__)
 objects_room.max_num_obj = 8
 objects_room.nslots = 7
-objects_room.data_dir = '/vol/biomedic3/agk21/datasets/multi-objects/RawData-subset/objects_room/default'
+objects_room.data_dir = os.path.join(HDF5_DATA_ROOT, 'objects_room_train-full.hdf5')
+# objects_room.data_dir = os.path.join(PNG_DATA_ROOT, 'multi-objects/RawData-subset/objects_room/default')
 HPARAMS_REGISTRY["objects_room"] = objects_room
+
+
+
+multidsprites = Hparams()
+multidsprites.update(clevr.__dict__)
+multidsprites.nslots = 5
+multidsprites.nconditions = 0
+multidsprites.max_num_obj = 4
+multidsprites.enc_arch = "32b1d2,16b1d2,8b1"
+multidsprites.dec_arch = "8b1u2,16b1u2,32b1"
+multidsprites.channels = [16, 32, 64]
+multidsprites.data_dir = os.path.join(HDF5_DATA_ROOT, 'multidsprites_colored_on_grayscale-full.hdf5')
+HPARAMS_REGISTRY["multidsprites"] = multidsprites
+
+
+tetrominoes = Hparams()
+tetrominoes.update(multidsprites.__dict__)
+tetrominoes.data_dir = os.path.join(HDF5_DATA_ROOT, 'tetrominoes-full.hdf5')
+HPARAMS_REGISTRY["tetrominoes"] = tetrominoes
+
 
 
 ffhq = Hparams()
 ffhq.update(clevr.__dict__)
 ffhq.max_num_obj = 9
 ffhq.nslots = 7
-ffhq.data_dir = '/vol/biomedic2/agk21/PhDLogs/datasets/FFHQ/data'
+ffhq.data_dir = os.path.join(PNG_DATA_ROOT, 'FFHQ/data')
 HPARAMS_REGISTRY["ffhq"] = ffhq
 
 
@@ -326,6 +364,11 @@ def add_arguments(parser: argparse.ArgumentParser):
         "--nconditions", 
         type=int,
         default=19)
+    parser.add_argument(
+        "--properties_list", 
+        nargs="+",
+        type=str,
+        default=[])
     parser.add_argument(
         "--initial_decoder_spatial_resolution", 
         type=int,

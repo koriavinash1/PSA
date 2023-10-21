@@ -5,7 +5,6 @@ import sys
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from pathlib import Path
 
-from data import get_available_dataset_configs
 import urllib.request
 from typing import Callable, Dict, List, Optional, Union
 
@@ -16,7 +15,7 @@ from tqdm import tqdm
 
 
 REMOTE_ROOT = "https://data-download.compute.dtu.dk/multi_object_datasets/"
-DATA_ROOT = "/data2"
+
 
 def download_file(url: str, destination: str, chunk_size: int = 1024):
     """Downloads files from URL."""
@@ -55,7 +54,14 @@ def _get_destination(name: str) -> str:
 
 if __name__ == "__main__":
 
-    available_datasets = get_available_dataset_configs()
+    available_datasets = [
+                        'clevr',
+                        'clevrtex',
+                        'multidsprites',
+                        'objects_room',
+                        'shapestacks',
+                        'tetrominoes'
+    ]
 
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument(
@@ -71,7 +77,15 @@ if __name__ == "__main__":
         action="store_true",
         help="Whether style transfer versions of the datasets should be downloaded too",
     )
+    parser.add_argument(
+        "--data_root",
+        default='../Datasets',
+        help="download dataset to",
+    )
     args = parser.parse_args()
+
+
+    DATA_ROOT = Path(args.data_root)
 
     # Validate datasets and skip invalid ones.
     datasets = args.datasets

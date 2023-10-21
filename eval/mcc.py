@@ -383,7 +383,7 @@ def mean_corr_coef_pt(x, y, method='pearson', return_assignment=False):
     """
     A differentiable pytorch implementation of the mean correlation coefficient metric.
 
-    :param x: torch.Tensor
+    :param x: torch.Tensor: BK x dz
     :param y: torch.Tensor
     :param method: str, optional
             The method used to compute the correlation coefficients.
@@ -394,7 +394,31 @@ def mean_corr_coef_pt(x, y, method='pearson', return_assignment=False):
                     use Spearman's nonparametric rank correlation coefficient
     :return: float
     """
-    d = x.size(1)
+    b, k, d = x.shape
+    y = []
+
+    for i in range(b):
+        # level 1 mcc accross slot index
+        x_ = x[i].t(); y_ = y[i].t() # d x k
+
+
+        if method == 'pearson':
+            cc = corrcoef_pt(x_, y_)[:k, k:]
+        elif method == 'spearman':
+            cc = spearmanr_pt(x_, y_)[:k, k:]
+        else:
+            raise ValueError('not a valid method: {}'.format(method))
+        cc = torch.abs(cc)
+        score, assignment, _ = auction_linear_assignment(cc, reduce='mean')
+
+        y.append(torch.cat([y_[:, assignment[i]].view(1, -1) for i in range(k)], dim=0).unsqueeze(0))
+    
+    y = torch.cat(y, dim=0) # ordered slots
+
+    x = x.flatten(0, 1); y = y.flatten(0, 1)
+
+
+    # level 2 mcc accross representation index
     if method == 'pearson':
         cc = corrcoef_pt(x, y)[:d, d:]
     elif method == 'spearman':
@@ -407,6 +431,7 @@ def mean_corr_coef_pt(x, y, method='pearson', return_assignment=False):
         return score, assignment
     else:
         return score
+        
 
 
 def mean_corr_coef_np(x, y, method='pearson'):
@@ -424,7 +449,30 @@ def mean_corr_coef_np(x, y, method='pearson'):
                     use Spearman's nonparametric rank correlation coefficient
     :return: float
     """
-    d = x.shape[1]
+        b, k, d = x.shape
+    y = []
+
+    for i in range(b):
+        # level 1 mcc accross slot index
+        x_ = x[i].T; y_ = y[i].T # d x k
+
+
+        if method == 'pearson':
+            cc = corrcoef_pt(x_, y_)[:k, k:]
+        elif method == 'spearman':
+            cc = spearmanr_pt(x_, y_)[:k, k:]
+        else:
+            raise ValueError('not a valid method: {}'.format(method))
+        cc = np.abs(cc)
+        score, assignment, _ = auction_linear_assignment(cc, reduce='mean')
+
+        y.append(np.concatenate([y_[:, assignment[i]].view(1, -1) for i in range(k)], axis=0)[None, ...])
+    
+    y = np.concatenate(y, axis=0) # ordered slots
+
+    x = np.reshape(x, (b*k, d)); y = np.reshape(y, (b*k, d))
+
+
     if method == 'pearson':
         cc = np.corrcoef(x, y, rowvar=False)[:d, d:]
     elif method == 'spearman':
@@ -434,6 +482,9 @@ def mean_corr_coef_np(x, y, method='pearson'):
     cc = np.abs(cc)
     score = cc[linear_sum_assignment(-1 * cc)].mean()
     return score
+
+
+
 
 
 def mean_corr_coef(x, y, method='pearson'):

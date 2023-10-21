@@ -8,14 +8,16 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from datasets import clevr, custom_loader
+from datasets import clevr, custom_loader, hdf5_loader
 from hps import Hparams
 from utils import linear_warmup, seed_worker
 
 
 def setup_dataloaders(args: Hparams) -> Dict[str, DataLoader]:
 
-    if args.hps == "clevr":
+    if args.data_dir.__contains__('hdf5'):
+        datasets = hdf5_loader(args)
+    elif args.hps == "clevr":
         datasets = clevr(args)
     elif args.hps in ["clevr_hans3", "clevr_hans7", "bitmoji", "objects_room", "ffhq"]:
         datasets = custom_loader(args)
