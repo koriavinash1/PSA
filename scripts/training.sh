@@ -6,7 +6,7 @@ MODEL=$1
 ZPRIOR=$2
 LEARNZPRIOR=$3
 HPS=$4
-
+RUN=$5
 BASENAME="PSA"
 EXPNAME="-$ZPRIOR-$MODEL"
 
@@ -16,7 +16,8 @@ RUNCMD="/vol/biomedic3/agk21/CoSA/SAModelling/main.py \
         --ckpt_dir $LOGSDIR \
         --hps $HPS \
         --model $MODEL \
-        --zprior $ZPRIOR"
+        --zprior $ZPRIOR \
+        --run_idx $RUN"
 
 
 if [ "$LEARNZPRIOR" = "1" ]; then

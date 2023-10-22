@@ -159,6 +159,11 @@ def add_arguments(parser: argparse.ArgumentParser):
         type=int, default=7
     )
     parser.add_argument(
+        "--run_idx", 
+        help="Nth random iteration of exp.", 
+        type=int, default=1
+    )
+    parser.add_argument(
         "--deterministic",
         help="Toggle cudNN determinism.",
         action="store_true",

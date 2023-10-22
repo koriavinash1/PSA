@@ -98,3 +98,28 @@ def slot_mcc(
             run2_slots: Tensor
     ):
     return slot_mean_corr_coef(run1_slots, run2_slots)
+
+
+
+
+@torch.no_grad()
+def calculate_fid(real_path: str,
+                    recon_path: str):
+    return fid_score.calculate_fid_given_paths(paths = [str(real_path), str(fake_path)], 
+                                                dims = 2048, 
+                                                device=0,
+                                                batch_size= 256, 
+                                                num_workers = 8)
+
+
+@torch.no_grad()
+def calculate_sfid(real_path: str,
+                    slots_path: str):
+
+    fid_list = [fid_score.calculate_fid_given_paths(paths = [str(real_path), 
+                                                        os.path.join(str(fake_path), f'slots-{i}')], 
+                                                dims = 2048, 
+                                                device=0,
+                                                batch_size= 256, 
+                                                num_workers = 8) for i in range(model.num_slots)]
+    return np.mean(fid_list)

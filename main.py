@@ -23,6 +23,7 @@ def main(args: Hparams):
     args.bs = args.batch_size
     args.lr = args.learning_rate
     args.wd = args.weight_decay
+    args.seed = args.seed + args.run_idx
     seed_all(args.seed, args.deterministic)
     # update hyperparams if resuming from a checkpoint
     ckpt = None

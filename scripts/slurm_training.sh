@@ -9,7 +9,7 @@ sbatch <<EOT
 #SBATCH --job-name="$1Z$2L$3H$4"
 #SBATCH --output=slurm.%N.%j.log   # Standard output and error loga
 
-echo $1, $2 $3 $4
+echo $1 $2 $3 $4 $5
 
 
 # Source Virtual environment (conda)
@@ -17,5 +17,5 @@ echo $1, $2 $3 $4
 
 conda activate cosa
 
-./training.sh $1 $2 $3 $4 
+./training.sh $1 $2 $3 $4 $5
 EOT
