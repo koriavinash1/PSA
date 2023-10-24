@@ -13,6 +13,12 @@ import torch.nn.functional as F
 from hps import Hparams
 
 
+def preprocess_batch(args: Hparams, batch: Dict[str, Tensor]):
+    batch["x"] = (batch["x"].to(args.device).float() - 127.5) / 127.5  # [-1, 1]
+    return batch
+
+
+
 def seed_all(seed, deterministic=True):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -252,7 +258,7 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
     # reconstructions, first abduct z from q(z|x,pa)
     zs = model.encoder(x=batch["x"])
 
-    (x_rec, _), recons, masks, attn = model.forward_latents(latents = zs, 
+    (x_rec, _), recons, masks, attn, _ = model.forward_latents(latents = zs, 
                                                 properties = batch['properties'])
     x_rec = postprocess(x_rec)
     viz_images.append(x_rec.astype(np.uint8))
@@ -315,7 +321,7 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
     if args.model in ['VSA', 'VASA', 'SSA', 'SSAU']:
         nsamples = orig.shape[0]
         for temp in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
-            (x_rec, _), recons, masks, attn = model.sample(nsamples, 
+            (x_rec, _), recons, masks, attn, slots = model.sample(nsamples, 
                                                             device = device, 
                                                             properties = batch['properties'], 
                                                             return_loc=True, t=temp)

@@ -581,7 +581,9 @@ class SlotAttentionWithPositions(nn.Module):
 
         k, v = self.to_k(tokens), self.to_v(tokens)
 
-            
+
+        initial_slots = slots.clone()
+
         if self.use_routing:
             for _ in range(self.niters):
                 slots, attn = self.step(slots, k, v)
@@ -591,8 +593,7 @@ class SlotAttentionWithPositions(nn.Module):
         else:
             slots, attn = self.step(slots, k, v)
 
-
-        return self.decoder_transformation(slots), attn, slot_loss
+        return self.decoder_transformation(slots), attn, slot_loss, (initial_slots, slots)
 
 
 class SlotAutoEncoder(nn.Module):
@@ -602,6 +603,7 @@ class SlotAutoEncoder(nn.Module):
         self.encoder = Encoder(args)
         self.decoder = Decoder(args)
 
+        self.num_slots = args.nslots
         self.no_additive_decoder = args.no_additive_decoder
         self.slot_attention = SlotAttentionWithPositions(args)
 
@@ -762,7 +764,7 @@ class SlotAutoEncoder(nn.Module):
             h, h_loc, h_logscale, kl_loss = self.get_latents(h)
             stats.append(dict(kl=kl_loss))
 
-        zs, attn, slot_kl_loss = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
+        zs, attn, slot_kl_loss, _ = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
         stats.append(dict(kl=slot_kl_loss))
 
         xh = self.decoder(zs)
@@ -838,7 +840,7 @@ class SlotAutoEncoder(nn.Module):
                 h = h.view(nsamples, self.latent_dim, self.res, self.res)
 
         h_loc, h_logscale = torch.zeros_like(h), torch.ones_like(h) 
-        zs, attn_maps, _ = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
+        zs, attn_maps, _, slots = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
 
         xh = self.decoder(zs)
         recons = None; masks = None
@@ -847,7 +849,7 @@ class SlotAutoEncoder(nn.Module):
         else:
             xh = self.projection(xh)
 
-        return self.likelihood.sample(xh, return_loc, t=t), recons, masks, attn_maps
+        return self.likelihood.sample(xh, return_loc, t=t), recons, masks, attn_maps, slots
 
 
 
@@ -865,7 +867,7 @@ class SlotAutoEncoder(nn.Module):
             latents, h_loc, h_logscale, kl_loss = self.get_latents(latents)
 
 
-        zs, attn_maps, _ = self.slot_attention(latents, h_loc, h_logscale, properties, num_slots)
+        zs, attn_maps, _, slots = self.slot_attention(latents, h_loc, h_logscale, properties, num_slots)
 
         xh = self.decoder(zs)
         recons = None; masks = None
@@ -874,4 +876,4 @@ class SlotAutoEncoder(nn.Module):
         else:
             xh = self.projection(xh)
 
-        return self.likelihood.sample(xh, t=t), recons, masks, attn_maps
+        return self.likelihood.sample(xh, t=t), recons, masks, attn_maps, slots

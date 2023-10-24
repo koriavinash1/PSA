@@ -54,7 +54,7 @@ def setup_optimizer(
 
 
 def setup_directories(args: Hparams) -> str:
-    save_dir = os.path.join(args.ckpt_dir, args.exp_name, args.run_idx)
+    save_dir = os.path.join(args.ckpt_dir, args.exp_name, f'Run-{args.run_idx}')
     if os.path.isdir(save_dir):
         if (
             input(f"\nSave directory '{save_dir}' already exists, overwrite? [y/N]: ")

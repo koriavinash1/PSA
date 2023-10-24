@@ -15,6 +15,8 @@ from torch import Tensor, nn
 from pytorch_fid import fid_score
 from sklearn.metrics import accuracy_score
 from mcc import slot_mean_corr_coef
+from torch.func import jacfwd
+from torchmetrics import R2Score
 
 
 def ari(
@@ -50,8 +52,8 @@ def ari(
 def mse(
         true_image: Tensor, 
         reconstruction: Tensor, 
-        object_mask: Optional[Bool] = None,
-        only_fg: Optional[Bool] = False
+        object_mask: Optional[Tensor] = None,
+        only_fg: Optional[bool] = False
 ) -> Tensor:
 
     if only_fg:
@@ -62,12 +64,36 @@ def mse(
     return ((true_image - reconstruction)**2).mean([1, 2, 3]).mean()
 
 
+def slot_mcc(
+            run1_slots: Tensor,
+            run2_slots: Tensor
+    ):
+    return slot_mean_corr_coef(run1_slots, run2_slots)
+
+
+
+
+@torch.no_grad()
+def calculate_fid(real_path: str,
+                    recon_path: str):
+    return fid_score.calculate_fid_given_paths(paths = [str(real_path), str(fake_path)], 
+                                                dims = 1024, 
+                                                device=0,
+                                                batch_size= 256, 
+                                                num_workers = 8)
+
+
+
 
 def compositional_contrast(
         latents: Tensor,
-        outputs: Tensor
+        mixing_fn: Tensor
 ) -> Tensor:
     b, K, d = latents.shape
+    
+    jac = jacfwd(mixing_fn)(latents)
+    import pdb; pdb.set_trace()
+
 
     cc = 0
     for k in range(K):
@@ -93,33 +119,29 @@ def compositional_contrast(
     return cc
 
 
-def slot_mcc(
-            run1_slots: Tensor,
-            run2_slots: Tensor
-    ):
-    return slot_mean_corr_coef(run1_slots, run2_slots)
+def r2_score(
+    true_latents: Tensor, 
+    ordered_predicted_latents: Tensor, 
+) -> float:
+    """
+    Calculates R2 score. Slots are flattened before calculating R2 score.
 
+    Args:
+        true_latents: tensor of shape (batch_size, n_slots, n_latents)
+        predicted_latents: tensor of shape (batch_size, n_slots, n_latents)
+        indices: tensor of shape (batch_size, n_slots, 2) with indices of matched slots
 
+    Returns:
+        avg_r2_score: average R2 score over all latents
+    """
 
+    # BK x d
 
-@torch.no_grad()
-def calculate_fid(real_path: str,
-                    recon_path: str):
-    return fid_score.calculate_fid_given_paths(paths = [str(real_path), str(fake_path)], 
-                                                dims = 2048, 
-                                                device=0,
-                                                batch_size= 256, 
-                                                num_workers = 8)
+    predicted_latents = predicted_latents.detach().cpu()
+    true_latents = true_latents.detach().cpu()
 
-
-@torch.no_grad()
-def calculate_sfid(real_path: str,
-                    slots_path: str):
-
-    fid_list = [fid_score.calculate_fid_given_paths(paths = [str(real_path), 
-                                                        os.path.join(str(fake_path), f'slots-{i}')], 
-                                                dims = 2048, 
-                                                device=0,
-                                                batch_size= 256, 
-                                                num_workers = 8) for i in range(model.num_slots)]
-    return np.mean(fid_list)
+    r2 = R2Score(true_latents.shape[1], multioutput="raw_values")
+    r2_score_raw = r2(predicted_latents, true_latents)
+    r2_score_raw[torch.isinf(r2_score_raw)] = torch.nan
+    avg_r2_score = torch.nanmean(r2_score_raw).item()
+    return avg_r2_score

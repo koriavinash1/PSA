@@ -379,7 +379,9 @@ def spearmanr_pt(x, y=None, rowvar=False):
     return rs
 
 
-def mean_corr_coef_pt(x, y, method='pearson', return_assignment=False):
+def mean_corr_coef_pt(x, y, 
+                    method='pearson', 
+                    return_ordered=False):
     """
     A differentiable pytorch implementation of the mean correlation coefficient metric.
 
@@ -427,14 +429,16 @@ def mean_corr_coef_pt(x, y, method='pearson', return_assignment=False):
         raise ValueError('not a valid method: {}'.format(method))
     cc = torch.abs(cc)
     score, assignment, _ = auction_linear_assignment(cc, reduce='mean')
-    if return_assignment:
-        return score, assignment
+    if return_ordered:
+        return score, y
     else:
         return score
         
 
 
-def mean_corr_coef_np(x, y, method='pearson'):
+def mean_corr_coef_np(x, y, 
+                    method='pearson',
+                    return_ordered=False):
     """
     A numpy implementation of the mean correlation coefficient metric.
 
@@ -481,19 +485,23 @@ def mean_corr_coef_np(x, y, method='pearson'):
         raise ValueError('not a valid method: {}'.format(method))
     cc = np.abs(cc)
     score = cc[linear_sum_assignment(-1 * cc)].mean()
+
+    if return_ordered:
+        return score, y
+
     return score
 
 
 
 
 
-def slot_mean_corr_coef(x, y, method='pearson'):
+def slot_mean_corr_coef(x, y, method='pearson', return_ordered=False):
     if type(x) != type(y):
         raise ValueError('inputs are of different types: ({}, {})'.format(type(x), type(y)))
     if isinstance(x, np.ndarray):
-        return mean_corr_coef_np(x, y, method)
+        return mean_corr_coef_np(x, y, method, return_ordered)
     elif isinstance(x, torch.Tensor):
-        return mean_corr_coef_pt(x, y, method)
+        return mean_corr_coef_pt(x, y, method, return_ordered)
     else:
         raise ValueError('not a supported input type: {}'.format(type(x)))
 

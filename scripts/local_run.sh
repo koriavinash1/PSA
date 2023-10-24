@@ -19,3 +19,8 @@ CUDA_VISIBLE_DEVICES=1 python ../main.py --exp_name SA --model SA --hps clevr --
 
 
 
+CUDA_VISIBLE_DEVICES=0 python main.py --exp_name SSA_zp_gmm --learn_prior --zprior gmm --model SSA --hps clevr --ckpt_dir RandomSeedRuns --run_idx 1 &
+CUDA_VISIBLE_DEVICES=0 python main.py --exp_name SSA_zp_gmm --learn_prior --zprior gmm --model SSA --hps clevr --ckpt_dir RandomSeedRuns --run_idx 2 &
+CUDA_VISIBLE_DEVICES=0 python main.py --exp_name SSA_zp_gmm --learn_prior --zprior gmm --model SSA --hps clevr --ckpt_dir RandomSeedRuns --run_idx 3 &
+CUDA_VISIBLE_DEVICES=0 python main.py --exp_name SSA_zp_gmm --learn_prior --zprior gmm --model SSA --hps clevr --ckpt_dir RandomSeedRuns --run_idx 4 &
+CUDA_VISIBLE_DEVICES=0 python main.py --exp_name SSA_zp_gmm --learn_prior --zprior gmm --model SSA --hps clevr --ckpt_dir RandomSeedRuns --run_idx 5 &

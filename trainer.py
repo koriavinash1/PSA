@@ -10,11 +10,8 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from hps import Hparams
-from utils import linear_warmup, write_images
+from utils import linear_warmup, write_images, preprocess_batch
 
-def preprocess_batch(args: Hparams, batch: Dict[str, Tensor]):
-    batch["x"] = (batch["x"].to(args.device).float() - 127.5) / 127.5  # [-1, 1]
-    return batch
 
 
 def trainer(
