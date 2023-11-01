@@ -7,10 +7,9 @@ ZPRIOR=$2
 LEARNZPRIOR=$3
 HPS=$4
 RUN=$5
-BASENAME="PSA"
-EXPNAME="-$ZPRIOR-$MODEL"
+EXPNAME=$MODEL
 
-LOGSDIR="/vol/biomedic3/agk21/CoSA/SAModelling/LOGS/$HPS"
+LOGSDIR="/vol/biomedic3/agk21/CoSA/SAModelling/LOGS-RandomSeeds/$HPS"
 
 RUNCMD="/vol/biomedic3/agk21/CoSA/SAModelling/main.py \
         --ckpt_dir $LOGSDIR \
@@ -21,14 +20,16 @@ RUNCMD="/vol/biomedic3/agk21/CoSA/SAModelling/main.py \
 
 
 if [ "$LEARNZPRIOR" = "1" ]; then
-    EXPNAME="$EXPNAME-LearnZprior"
+    if [ "$ZPRIOR" = "gmm" ]; then
+        EXPNAME=$EXPNAME'LGMM'
+    fi
     RUNCMD="$RUNCMD --learn_prior"
 fi
 
 
-BASENAME="$BASENAME-$EXPNAME"
 
-RUNCMD="$RUNCMD --exp_name $BASENAME"
+
+RUNCMD="$RUNCMD --exp_name $EXPNAME"
 
 echo "$RUNCMD"
 python $RUNCMD

@@ -381,7 +381,8 @@ def spearmanr_pt(x, y=None, rowvar=False):
 
 def mean_corr_coef_pt(x, y, 
                     method='pearson', 
-                    return_ordered=False):
+                    return_ordered=False,
+                    affine_representations = True):
     """
     A differentiable pytorch implementation of the mean correlation coefficient metric.
 
@@ -397,7 +398,7 @@ def mean_corr_coef_pt(x, y,
     :return: float
     """
     b, k, d = x.shape
-    y = []
+    ny = []
 
     for i in range(b):
         # level 1 mcc accross slot index
@@ -413,26 +414,48 @@ def mean_corr_coef_pt(x, y,
         cc = torch.abs(cc)
         score, assignment, _ = auction_linear_assignment(cc, reduce='mean')
 
-        y.append(torch.cat([y_[:, assignment[i]].view(1, -1) for i in range(k)], dim=0).unsqueeze(0))
+        ny.append(torch.cat([y_[:, assignment[i]].view(1, -1) for i in range(k)], dim=0).unsqueeze(0))
     
-    y = torch.cat(y, dim=0) # ordered slots
+    ny = torch.cat(ny, dim=0) # ordered slots
 
-    x = x.flatten(0, 1); y = y.flatten(0, 1)
+    x = x.flatten(0, 1); oy = ny.flatten(0, 1)
 
-
-    # level 2 mcc accross representation index
+    y = oy.cpu().numpy()
+    if affine_representations:
+        cca = CCA(n_components=2)
+        cca.fit(x.cpu().numpy(), oy)
+        res_in = cca.transform(x, oy)
+        x = res_in[0]; y = res_in[1]
+        
+    
     if method == 'pearson':
-        cc = corrcoef_pt(x, y)[:d, d:]
+        cc = np.corrcoef(x, y, rowvar=False)[:d, d:]
     elif method == 'spearman':
-        cc = spearmanr_pt(x, y)[:d, d:]
+        cc = spearmanr(x, y)[0][:d, d:]
     else:
         raise ValueError('not a valid method: {}'.format(method))
-    cc = torch.abs(cc)
-    score, assignment, _ = auction_linear_assignment(cc, reduce='mean')
+    cc = np.abs(cc)
+    score = cc[linear_sum_assignment(-1 * cc)].mean()
+
     if return_ordered:
-        return score, y
-    else:
-        return score
+        return score, oy
+
+    return score
+
+
+    # # level 2 mcc accross representation index
+    # if method == 'pearson':
+    #     cc = corrcoef_pt(x, y)[:d, d:]
+    # elif method == 'spearman':
+    #     cc = spearmanr_pt(x, y)[:d, d:]
+    # else:
+    #     raise ValueError('not a valid method: {}'.format(method))
+    # cc = torch.abs(cc)
+    # score, assignment, _ = auction_linear_assignment(cc, reduce='mean')
+    # if return_ordered:
+    #     return score, y
+    # else:
+    #     return score
         
 
 
@@ -454,7 +477,7 @@ def mean_corr_coef_np(x, y,
     :return: float
     """
     b, k, d = x.shape
-    y = []
+    ny = []
 
     for i in range(b):
         # level 1 mcc accross slot index
@@ -470,11 +493,11 @@ def mean_corr_coef_np(x, y,
         cc = np.abs(cc)
         score, assignment, _ = auction_linear_assignment(cc, reduce='mean')
 
-        y.append(np.concatenate([y_[:, assignment[i]].view(1, -1) for i in range(k)], axis=0)[None, ...])
+        ny.append(np.concatenate([y_[:, assignment[i]].view(1, -1) for i in range(k)], axis=0)[None, ...])
     
-    y = np.concatenate(y, axis=0) # ordered slots
+    ny = np.concatenate(ny, axis=0) # ordered slots
 
-    x = np.reshape(x, (b*k, d)); y = np.reshape(y, (b*k, d))
+    x = np.reshape(x, (b*k, d)); y = np.reshape(ny, (b*k, d))
 
 
     if method == 'pearson':

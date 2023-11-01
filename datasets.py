@@ -200,7 +200,7 @@ class CLEVRN(Dataset):
         num_obj: int = 6,
         transform: Optional[Callable] = None,
         target_transform: Optional[Callable] = None,
-        cache: bool = False,
+        cache: bool = True,
     ):
         super().__init__()
         self.cache = cache
@@ -284,19 +284,24 @@ class HDF5Loader(Dataset):
         self.dataset_size = dataset_size
 
         self.data, self.metadata = self._load_data_hdf5(self.root_dir)
+        print ('all data loaded')
         self._filter_to_max_objects()
 
         # print (len(self.data['image']))
 
     def _filter_to_max_objects(self):
+        # print ('filtering images based on num_objects')
         num_objects = np.array(self.data['num_actual_objects'])
-        condition = np.where(num_objects <= self.max_objects)[0]
+        self.condition = np.where(num_objects < self.max_objects)[0]
+        self.start_idx = int(self.start_idx*len(self.condition)/len(num_objects))
+        self.dataset_size = int(self.dataset_size*len(self.condition)/len(num_objects))
+        self.condition = self.condition[self.start_idx: self.start_idx + self.dataset_size]
 
-        for feature_name in self.data.keys():
-            self.data[feature_name] = self.data[feature_name][condition]
+        # for feature_name in self.data.keys():
+        #     self.data[feature_name] = self.data[feature_name][condition]
          
-        for feature_name in self.data.keys():
-            self.data[feature_name] = self.data[feature_name][self.start_idx: self.start_idx + self.dataset_size]
+        # for feature_name in self.data.keys():
+        #     self.data[feature_name] = self.data[feature_name][self.start_idx: self.start_idx + self.dataset_size]
 
 
     def _preprocess_feature(self, feature: np.ndarray, feature_name: str) -> Any:
@@ -318,9 +323,10 @@ class HDF5Loader(Dataset):
                                         self.resolution, 
                                         Image.NEAREST))[:, :, None]
 
+            feature[feature > self.max_objects] = 0
             one_hot_masks = F.one_hot(
                 torch.as_tensor(feature, dtype=torch.int64),
-                num_classes=self.max_objects,
+                num_classes=self.max_objects + 1,
             )
 
             # (num_objects, 1, height, width)
@@ -351,6 +357,7 @@ class HDF5Loader(Dataset):
 
 
     def __getitem__(self, index) -> Dict:
+        index = self.condition[index]
         out = {}
         for feature_name in self.data.keys():
             out[feature_name] = self._preprocess_feature(
@@ -404,7 +411,7 @@ class HDF5Loader(Dataset):
 
 
     def __len__(self):
-        return len(self.data['image'])
+        return len(self.condition)
 
 
 class Clevr(HDF5Loader):

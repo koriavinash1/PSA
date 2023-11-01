@@ -21,20 +21,22 @@ from metrics import (ari,
 
 
 import sys 
+import copy
+
 sys.path.append('..')
 from hps import Hparams
 from train_setup import setup_dataloaders
 from model import SlotAutoEncoder
 from utils import preprocess_batch
 import matplotlib.pyplot as plt
-
+from tqdm import tqdm
 
 
 @torch.no_grad()
 def main(opt: argparse.ArgumentParser):
 
     ckpt_dir = opt.checkpoint_dir
-    run_dirs = [dir_str.__contains__('Run') for dir_str in os.listdir(ckpt_dir)]
+    run_dirs = [dir_str for dir_str in os.listdir(ckpt_dir) if dir_str.__contains__('Run')]
     
     config = torch.load(os.path.join(ckpt_dir, run_dirs[0], 'checkpoint.pt'))['hparams']
     hparams = Hparams()
@@ -44,7 +46,7 @@ def main(opt: argparse.ArgumentParser):
 
     metric_logs = [] 
     run_logs = []
-    for run_dir in run_dirs:
+    for ir, run_dir in enumerate(run_dirs):
         ckpt_path = os.path.join(ckpt_dir, run_dir, 'checkpoint.pt')
         ckpt = torch.load(ckpt_path)
         model = SlotAutoEncoder(hparams)
@@ -60,6 +62,7 @@ def main(opt: argparse.ArgumentParser):
             model.load_state_dict(ckpt['model_state_dict'])
 
         model.eval()
+        cpu_model = copy.deepcopy(model)
         model.to(opt.device)
 
         logs = {
@@ -77,10 +80,10 @@ def main(opt: argparse.ArgumentParser):
         
 
 
-        for i, batch in test_dataloader:
+        for i, batch in tqdm(enumerate(test_dataloader), desc=f'Computing metrics for Run-{ir}'):
             if i > 100: break
 
-            batch = preprocess_batch(args, batch)
+            batch = preprocess_batch(hparams, batch)
             bs = batch["x"].shape[0]
 
             if 'properties' not in batch.keys():
@@ -104,14 +107,14 @@ def main(opt: argparse.ArgumentParser):
                 eval_metrics['ari'] += ari(gt_mask, slot_mask, 1)
             
 
-            eval_metrics['mse_full'] += mse(batch['x'], x_rec, gt_mask, only_fg = False)
-            eval_metrics['mse_fg']   += mse(batch['x'], x_rec, gt_mask, only_fg = True)
-            eval_metrics['compositional_constraint'] += compositional_contrast(zs, model.forward_latents)
+            eval_metrics['mse_full'] += mse(batch['x'], x_rec, only_fg = False)
+            if 'mask' in batch.keys(): eval_metrics['mse_fg']   += mse(batch['x'], x_rec, gt_mask, only_fg = True)
+            # eval_metrics['compositional_constraint'] += compositional_contrast(final_slots.cpu(), cpu_model.decode_slots) # memory peaked at 120GB on cpu
 
 
             # append latents for mcc calculation
-            logs['initial_slots'].append(init_slots)
-            logs['final_slots'].append(final_slots)
+            logs['initial_slots'].append(init_slots.detach().cpu())
+            logs['final_slots'].append(final_slots.detach().cpu())
 
 
             # save real images
@@ -164,8 +167,8 @@ def main(opt: argparse.ArgumentParser):
                                                                         properties = batch['properties'], 
                                                                         return_loc=True)
 
-                logs['compositional_initial_slots'].append(sampled_init_slots)
-                logs['compositional_final_slots'].append(sampled_final_slots)
+                logs['compositional_initial_slots'].append(sampled_init_slots.detach().cpu())
+                logs['compositional_final_slots'].append(sampled_final_slots.detach().cpu())
 
 
                 for k in range(bs):
@@ -180,27 +183,10 @@ def main(opt: argparse.ArgumentParser):
                             torchvision.utils.save_image(slot, os.path.join(sampled_slot_path, f'{filename}-{islot}.png'))
 
 
-        for key in logs:
-            if len(logs[key]): 
-                logs[key] = torch.cat(logs[key], 0)
-
-                mcc_score, r2_ = -100, -100
-                if len(run_logs):
-                    mcc_score, ordered_z = slot_mean_corr_coef(run_logs[-1][key], logs[key], return_ordered = True)
-                    r2_ = r2_score(run_logs[-1][key].flatten(0, 1), ordered_z)
-
-                eval_metrics['SMCC_' + key] = mcc_score
-                eval_metrics['R2_' + key]   = r2_ 
-
-
-        run_logs.append(logs)
-
-
-
         # ========================================================================
         for key in eval_metrics.keys():
-            if key == 'count': continue
-            eval_metrics[key] = eval_metrics[key].numpy() * 1.0/eval_metrics['count']
+            if isinstance(eval_metrics[key], torch.Tensor):
+                eval_metrics[key] = eval_metrics[key].cpu().numpy() * 1.0/eval_metrics['count']
     
 
         eval_metrics['recon_fid'] = calculate_fid(real_img_path, recon_img_path)
@@ -219,20 +205,40 @@ def main(opt: argparse.ArgumentParser):
                     eval_metrics['true_compositional_slot_fid'] = calculate_fid(real_slots_path, sampled_slot_path)
 
 
+
+        # =====================================================================
+        for key in logs:
+            if len(logs[key]): 
+                logs[key] = torch.cat(logs[key], 0)
+
+                mcc_score, r2_ = 0.0, 0.0
+                if len(run_logs):
+                    mcc_score, ordered_z = slot_mean_corr_coef(run_logs[-1][key], logs[key], return_ordered = True)
+                    r2_ = r2_score(run_logs[-1][key].flatten(0, 1), ordered_z)
+
+                eval_metrics['SMCC_' + key] = mcc_score
+                eval_metrics['R2_' + key]   = r2_ 
+
+
+        run_logs.append(logs)
+
         metric_logs.append(eval_metrics)
+
 
     all_metrics = metric_logs[-1].keys()
     return_metrics = {}
 
     for metric in all_metrics:
+        if metric == 'count': continue
+
         tmp = []
         for ii in range(len(metric_logs)):
-            if metric_logs[ii][metric] >= 0:
+            if metric_logs[ii][metric] == 0.0:
                 tmp.append(metric_logs[ii][metric])
         mean = np.mean(tmp); var = np.var(tmp)
 
-        return_metrics[metric + '_mean'] = mean
-        return_metrics[metric + '_var'] = var
+        return_metrics[metric + '_mean'] = float(mean)
+        return_metrics[metric + '_var'] = float(var)
 
     return return_metrics, metric_logs
 
@@ -262,7 +268,7 @@ if __name__ == '__main__':
 
     return_metrics, metric_logs = main(opt)
 
-    metric_logs = {f'Run-{i}': info for i, info in enumerate(metric_logs)}
+    metric_logs = {f'Run-{i}': {k: float(v) for k, v in info.items()} for i, info in enumerate(metric_logs)}
 
     with open(os.path.join(opt.checkpoint_dir, 'final_logs.json'), 'w') as json_file:
         json.dump(return_metrics, json_file, indent=4)

@@ -75,9 +75,9 @@ def slot_mcc(
 
 @torch.no_grad()
 def calculate_fid(real_path: str,
-                    recon_path: str):
+                    fake_path: str):
     return fid_score.calculate_fid_given_paths(paths = [str(real_path), str(fake_path)], 
-                                                dims = 1024, 
+                                                dims = 2048, 
                                                 device=0,
                                                 batch_size= 256, 
                                                 num_workers = 8)
@@ -137,7 +137,7 @@ def r2_score(
 
     # BK x d
 
-    predicted_latents = predicted_latents.detach().cpu()
+    predicted_latents = ordered_predicted_latents.detach().cpu()
     true_latents = true_latents.detach().cpu()
 
     r2 = R2Score(true_latents.shape[1], multioutput="raw_values")

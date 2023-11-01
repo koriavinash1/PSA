@@ -27,7 +27,7 @@ def setup_dataloaders(args: Hparams) -> Dict[str, DataLoader]:
 
     kwargs = {
         "batch_size": args.bs,
-        "num_workers": os.cpu_count() // 2,
+        # "num_workers": os.cpu_count() // 2,
         "pin_memory": True,
         "worker_init_fn": seed_worker,
     }

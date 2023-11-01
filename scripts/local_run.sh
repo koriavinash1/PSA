@@ -1,26 +1,47 @@
-CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSAU_zp_gauss --model SSAU --hps clevr_hans3 --ckpt_dir ../checkpoints_rgb_correction &
-CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSAU_zp_learngauss --learn_prior --model SSAU --hps clevr_hans3 --ckpt_dir ../checkpoints_rgb_correction &
-CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSAU_zp_gmm --learn_prior --zprior gmm --model SSAU --hps clevr_hans3 --ckpt_dir ../checkpoints_rgb_correction &
+#!/bin/bash
 
-CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSA_zp_gauss --model SSA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &
-CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSA_zp_learngauss --learn_prior --model SSA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &
-CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name SSA_zp_gmm --learn_prior --zprior gmm --model SSA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &
+# tetrominoes, clevr_tex, objects_room, multidsprites, clevr
 
-CUDA_VISIBLE_DEVICES=1 python ../main.py --exp_name VASA_zp_gauss --model VASA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &
-CUDA_VISIBLE_DEVICES=1 python ../main.py --exp_name VASA_zp_learngauss --learn_prior --model VASA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &
-CUDA_VISIBLE_DEVICES=1 python ../main.py --exp_name VASA_zp_gmm --learn_prior --zprior gmm --model VASA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &
+for HPS in clevr #_tex tetrominoes objects_room multidsprites
+do
+    LOGSDIR="/vol/biomedic3/agk21/CoSA/SAModelling/LOGS-RandomSeeds/$HPS"
 
-CUDA_VISIBLE_DEVICES=1 python ../main.py --exp_name VSA_zp_gauss --model VSA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &
-CUDA_VISIBLE_DEVICES=1 python ../main.py --exp_name VSA_zp_learngauss --learn_prior --model VASA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &
-CUDA_VISIBLE_DEVICES=1 python ../main.py --exp_name VSA_zp_gmm --learn_prior --zprior gmm --model VSA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &
+    for MODEL in VSA VASA SSA
+    do
+        for RUN in 1 2 3 4 5
+        do
+            RUNCMD="/vol/biomedic3/agk21/CoSA/SAModelling/main.py \
+                    --exp_name $MODEL'LGMM' \
+                    --learn_prior \
+                    --zprior gmm \
+                    --model $MODEL \
+                    --hps $HPS \
+                    --ckpt_dir $LOGSDIR \
+                    --run_idx $RUN"
+            echo $RUNCMD
+            if [ "$MODEL" = "SSA" ]; then
+                CUDA_VISIBLE_DEVICES=0 python $RUNCMD
+            else
+                CUDA_VISIBLE_DEVICES=0 python $RUNCMD
+            fi
+        done
+    done
+    
+    for MODEL in SA ASA
+    do
+        for RUN in 1 2 3 4 5
+        do
+            RUNCMD="/vol/biomedic3/agk21/CoSA/SAModelling/main.py \
+                    --exp_name $MODEL \
+                    --model $MODEL \
+                    --hps $HPS \
+                    --ckpt_dir $LOGSDIR \
+                    --run_idx $RUN"
+            echo $RUNCMD
+            CUDA_VISIBLE_DEVICES=0 python $RUNCMD
+        done
+    done
 
-CUDA_VISIBLE_DEVICES=0 python ../main.py --exp_name ASA --model ASA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &
-CUDA_VISIBLE_DEVICES=1 python ../main.py --exp_name SA --model SA --hps clevr --ckpt_dir ../checkpoints_rgb_correction &
+done
 
 
-
-CUDA_VISIBLE_DEVICES=0 python main.py --exp_name SSA_zp_gmm --learn_prior --zprior gmm --model SSA --hps clevr --ckpt_dir RandomSeedRuns --run_idx 1 &
-CUDA_VISIBLE_DEVICES=0 python main.py --exp_name SSA_zp_gmm --learn_prior --zprior gmm --model SSA --hps clevr --ckpt_dir RandomSeedRuns --run_idx 2 &
-CUDA_VISIBLE_DEVICES=0 python main.py --exp_name SSA_zp_gmm --learn_prior --zprior gmm --model SSA --hps clevr --ckpt_dir RandomSeedRuns --run_idx 3 &
-CUDA_VISIBLE_DEVICES=0 python main.py --exp_name SSA_zp_gmm --learn_prior --zprior gmm --model SSA --hps clevr --ckpt_dir RandomSeedRuns --run_idx 4 &
-CUDA_VISIBLE_DEVICES=0 python main.py --exp_name SSA_zp_gmm --learn_prior --zprior gmm --model SSA --hps clevr --ckpt_dir RandomSeedRuns --run_idx 5 &

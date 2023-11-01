@@ -17,7 +17,7 @@ PNG_DATA_ROOT = '/vol/biomedic2/agk21/PhDLogs/datasets/'
 
 clevr = Hparams()
 clevr.learning_rate = 2e-4
-clevr.batch_size = 16
+clevr.batch_size = 64
 clevr.weight_decay = 0.01
 clevr.input_res = 64
 clevr.pad = 4
@@ -57,6 +57,7 @@ HPARAMS_REGISTRY["clevr_hans7"] = clevr_hans7
 
 shapestacks = Hparams()
 shapestacks.update(clevr.__dict__)
+shapestacks.epochs = 2000
 shapestacks.data_dir = os.path.join(HDF5_DATA_ROOT, 'shapestacks-full.hdf5')
 HPARAMS_REGISTRY["shapestacks"] = shapestacks
 
@@ -71,32 +72,34 @@ HPARAMS_REGISTRY["bitmoji"] = bitmoji
 
 
 
-objects_room = Hparams()
-objects_room.update(clevr.__dict__)
-objects_room.max_num_obj = 8
-objects_room.nslots = 7
-objects_room.data_dir = os.path.join(HDF5_DATA_ROOT, 'objects_room_train-full.hdf5')
-# objects_room.data_dir = os.path.join(PNG_DATA_ROOT, 'multi-objects/RawData-subset/objects_room/default')
-HPARAMS_REGISTRY["objects_room"] = objects_room
-
-
-
 multidsprites = Hparams()
 multidsprites.update(clevr.__dict__)
 multidsprites.nslots = 5
+multidsprites.input_res = 32
 multidsprites.nconditions = 0
 multidsprites.max_num_obj = 4
 multidsprites.enc_arch = "32b1d2,16b1d2,8b1"
 multidsprites.dec_arch = "8b1u2,16b1u2,32b1"
 multidsprites.channels = [16, 32, 64]
-multidsprites.data_dir = os.path.join(HDF5_DATA_ROOT, 'multidsprites_colored_on_grayscale-full.hdf5')
+# multidsprites.data_dir = os.path.join(HDF5_DATA_ROOT, 'multidsprites_colored_on_grayscale-full.hdf5')
+multidsprites.data_dir = os.path.join(PNG_DATA_ROOT, 'multi-objects/RawData-subset/multi_dsprites/colored_on_grayscale')
 HPARAMS_REGISTRY["multidsprites"] = multidsprites
 
 
 tetrominoes = Hparams()
 tetrominoes.update(multidsprites.__dict__)
-tetrominoes.data_dir = os.path.join(HDF5_DATA_ROOT, 'tetrominoes-full.hdf5')
+# tetrominoes.data_dir = os.path.join(HDF5_DATA_ROOT, 'tetrominoes-full.hdf5')
+tetrominoes.data_dir = os.path.join(PNG_DATA_ROOT, 'multi-objects/RawData-subset/tetrominoes')
 HPARAMS_REGISTRY["tetrominoes"] = tetrominoes
+
+
+objects_room = Hparams()
+objects_room.update(multidsprites.__dict__)
+objects_room.max_num_obj = 5
+objects_room.nslots = 7
+# objects_room.data_dir = os.path.join(HDF5_DATA_ROOT, 'objects_room_train-full.hdf5')
+objects_room.data_dir = os.path.join(PNG_DATA_ROOT, 'multi-objects/RawData-subset/objects_room/default')
+HPARAMS_REGISTRY["objects_room"] = objects_room
 
 
 
@@ -135,7 +138,7 @@ def add_arguments(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--data_dir", 
         help="Data directory to load form.", 
-        type=str, default="/data2"
+        type=str, default="/vol/biomedic3/agk21/datasets/"
     )
     parser.add_argument(
         "--max_num_obj", 
@@ -173,7 +176,7 @@ def add_arguments(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--epochs", 
         help="Training epochs.", 
-        type=int, default=5000
+        type=int, default=600
     )
     parser.add_argument(
         "-bs",
@@ -358,10 +361,6 @@ def add_arguments(parser: argparse.ArgumentParser):
         type=int,
         default=7)
     parser.add_argument(
-        "--slot_dim", 
-        type=int,
-        default=128)
-    parser.add_argument(
         "--implicit", 
         action="store_true",
         default=False)
@@ -380,6 +379,11 @@ def add_arguments(parser: argparse.ArgumentParser):
         default=8)
     parser.add_argument(
         "--no_additive_decoder", 
+        action="store_true",
+        default=False)
+    
+    parser.add_argument(
+        "--stochastic_slots", 
         action="store_true",
         default=False)
     return parser

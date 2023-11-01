@@ -190,8 +190,8 @@ class DGaussNet(nn.Module):
             args.input_channels, args.input_channels, kernel_size=1, stride=1
         )
 
-        if args.input_channels == 3:
-            self.channel_coeffs = nn.Conv2d(args.input_channels, 3, kernel_size=1, stride=1)
+        # if args.input_channels == 3:
+        #     self.channel_coeffs = nn.Conv2d(args.input_channels, 3, kernel_size=1, stride=1)
 
         if args.std_init > 0:  # if std_init=0, random init weights for diag cov
             nn.init.zeros_(self.x_logscale.weight)
@@ -312,11 +312,12 @@ class SlotAttentionWithPositions(nn.Module):
         self.nslots = args.nslots
         self.niters = args.niters
         self.implicit = args.implicit
-        self.key_dim = args.slot_dim
-        self.use_routing = (self.niters > 0)
+        self.key_dim = args.channels[-1]
+        self.use_gru = (self.niters > 0)
 
         self.embedding_dim = args.channels[-1]
 
+        self.EM = args.stochastic_slots
         self.no_additive_decoder = args.no_additive_decoder
 
         self.init_spatial_resolution = args.initial_decoder_spatial_resolution
@@ -330,7 +331,7 @@ class SlotAttentionWithPositions(nn.Module):
         self.to_k = nn.Linear(self.embedding_dim, self.key_dim)
         self.to_v = nn.Linear(self.embedding_dim, self.key_dim)
 
-        if self.use_routing:
+        if self.use_gru:
             self.gru  = nn.GRUCell(self.key_dim, self.key_dim)
 
 
@@ -358,24 +359,29 @@ class SlotAttentionWithPositions(nn.Module):
                 self.slots_loc    = nn.Parameter(torch.randn(1, self.key_dim))
                 self.slots_logscale = nn.Parameter(torch.rand(1, self.key_dim))
             else:
-                self.slots_loc = nn.Sequential(
+                self.stochastic_slots = True
+                self.z_to_slots = nn.Sequential(
                                 nn.Linear(self.embedding_dim, self.key_dim),
+                                nn.GELU(),
+                                nn.Linear(self.key_dim, self.key_dim),
+                            )
+
+                self.slots_loc = nn.Sequential(
+                                nn.Linear(self.key_dim, self.key_dim),
                                 nn.GELU(),
                                 nn.Linear(self.key_dim, self.key_dim),
                             )
 
                 self.slots_logscale = nn.Sequential(
-                                nn.Linear(self.embedding_dim, self.key_dim),
+                                nn.Linear(self.key_dim, self.key_dim),
                                 nn.GELU(),
                                 nn.Linear(self.key_dim, self.key_dim),
                             )
         else:
-            hidden_dim = (self.embedding_dim + self.key_dim)//2
-
             self.init_slot_transformation = nn.Sequential(
-                            nn.Linear(self.embedding_dim , hidden_dim),
-                            nn.ReLU(),
-                            nn.Linear(hidden_dim, self.key_dim),
+                            nn.Linear(self.embedding_dim , self.key_dim),
+                            nn.GELU(),
+                            nn.Linear(self.key_dim, self.key_dim),
                         )
 
       
@@ -441,8 +447,9 @@ class SlotAttentionWithPositions(nn.Module):
 
         if self.variational_slots:
             features = features.flatten(-2, -1).mean(-1) 
-            slots_loc = self.slots_loc(features)
-            slots_logscale = self.slots_logscale(features)
+            slots = self.z_to_slots(features)
+            slots_loc = self.slots_loc(slots)
+            slots_logscale = self.slots_logscale(slots)
         else:
             slots_loc = self.slots_loc.expand(nsamples, -1)
             slots_logscale = self.slots_logscale.expand(nsamples, -1)
@@ -453,7 +460,8 @@ class SlotAttentionWithPositions(nn.Module):
                     nsamples, nslots, self.key_dim, device=device
                 )
 
-        return (slots, slots_loc.unsqueeze(-1).unsqueeze(-1), slots_logscale.unsqueeze(-1).unsqueeze(-1))
+        return (slots, slots_loc.unsqueeze(-1).unsqueeze(-1),\
+                 slots_logscale.unsqueeze(-1).unsqueeze(-1))
 
 
 
@@ -468,12 +476,12 @@ class SlotAttentionWithPositions(nn.Module):
         features_logscale = features_logscale.flatten(-2, -1).permute(0, 2, 1)
 
         b, n, c = features_loc.shape
-        xslot = (features_loc.unsqueeze(1) + (0.5*features_logscale).exp().unsqueeze(1) * torch.randn(
-                                    b, nslots, n, c, device=features_loc.device)).mean(2)
+        xslot = (features_loc.unsqueeze(1) + \
+                    (0.5*features_logscale).exp().unsqueeze(1) * torch.randn(
+                        b, nslots, n, c, device=features_loc.device)).mean(2)
 
         return self.init_slot_transformation(xslot)
-
-
+    
 
     def encoder_transformation(self, features: Tensor) -> Tensor:
         #features: B x W x H x C
@@ -526,7 +534,7 @@ class SlotAttentionWithPositions(nn.Module):
 
         slots = torch.einsum('bjd,bij->bid', v, attn)
 
-        if self.use_routing:
+        if self.use_gru:
             slots = self.gru(
                 rearrange(slots, 'b n d -> (b n) d'),
                 rearrange(slots_prev, 'b n d -> (b n) d')
@@ -538,6 +546,60 @@ class SlotAttentionWithPositions(nn.Module):
 
         return slots, attn_vis
 
+
+    def EM_step(self, slots_prev: Tensor,
+                    sigma_prev :Tensor, 
+                    pi_prev: Tensor,
+                    k: Tensor, 
+                    v: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+
+        # Sigma: K x d
+        # K: N x d
+        # pi_prev: K x 1
+
+        b , N, d = k.shape
+        _, K, _ = slots_prev.shape
+
+        sigma_prev = sigma_prev**2
+
+        slots_prev= self.norm_slots(slots_prev)
+        q = self.to_q(slots_prev)
+
+        # E-step
+
+        KSigmaKT = torch.einsum('bkjd, bjd -> bkj', k.unsqueeze(1)/sigma_prev.unsqueeze(2), k)/(N*K) # B x K x N
+        QSigmaQT = torch.einsum('bjnd, bjd -> bjn', q.unsqueeze(2)/sigma_prev.unsqueeze(2), q)/K # B x K x 1 
+        QSigmaKT = torch.einsum('bid, bjd -> bij', q/sigma_prev, k) # B x K x N 
+
+        dots = -(KSigmaKT + QSigmaQT - 2*QSigmaKT) +\
+                torch.log(torch.clamp(pi_prev, min=1e-6)) -\
+                torch.log(torch.clamp(np.sqrt(2*np.pi)* torch.norm(sigma_prev, 2, keepdim=True), min=1e-6))
+        
+        attn = dots.softmax(dim=1) + self.eps
+        
+
+
+        # M-step
+        Nk = attn.sum(dim=-1, keepdim=True)
+        pi = Nk/N
+        slots = torch.einsum('bjd,bij->bid', v, attn)/Nk
+
+        if self.use_gru:
+            slots = self.gru(
+                rearrange(slots, 'b n d -> (b n) d'),
+                rearrange(slots_prev, 'b n d -> (b n) d')
+            )
+
+            slots = slots.reshape(-1, self.nslots, self.key_dim)
+
+        slots = slots + self.slot_transformation(self.norm_pre_ff(slots))
+
+        sigma = torch.einsum('bkjd,bkj->bkd', \
+                    (v.unsqueeze(1) - slots.unsqueeze(2))**2, attn)/Nk/(N*K) 
+        norm = torch.norm(sigma, 2, keepdim=True)
+        sigma = sigma/(norm + 1e-3)
+
+        return slots, pi, sigma, attn
 
 
     def forward(self, 
@@ -569,8 +631,9 @@ class SlotAttentionWithPositions(nn.Module):
             slots = self.get_deterministic_initial_slots(inputs_loc, inputs_logscale, num_slots)
             slot_loss = torch.zeros_like(inputs)
 
+
+        _, num_slots, _ = slots.shape
         if hasattr(self, 'conditioning'):
-            _, num_slots, _ = slots.shape
             slots = self.conditioning(torch.cat([slots, properties[:, :num_slots, :].to(slots.device)], dim = 2))
 
 
@@ -584,14 +647,31 @@ class SlotAttentionWithPositions(nn.Module):
 
         initial_slots = slots.clone()
 
-        if self.use_routing:
-            for _ in range(self.niters):
-                slots, attn = self.step(slots, k, v)
+        if self.EM:
+            pi = torch.ones(b, num_slots, 1, device = slots.device, dtype = slots.dtype)/num_slots
+            sigma, slots = init_slot_logscale.squeeze().unsqueeze(1).repeat(1, num_slots, 1), slots
+            sigma = (0.5*sigma).exp()
 
-            if self.implicit: 
-                slots, attn = self.step(slots.detach(), k, v)
-        else:
-            slots, attn = self.step(slots, k, v)
+
+        for _ in range(self.niters):
+            if not self.EM:
+                slots, attn = self.step(slots, k, v)    
+            else:
+                slots, pi, sigma, attn = self.EM_step(slots, sigma, pi, k, v)
+
+
+
+        if self.implicit: 
+            if not self.EM:
+                slots, attn = self.step(slots.detach(), k, v)    
+            else:
+                slots, pi, sigma, attn = self.EM_step(slots.detach(), sigma, pi, k, v)
+
+
+
+        if self.EM:               
+            slots = slots + sigma * torch.randn_like(slots)
+
 
         return self.decoder_transformation(slots), attn, slot_loss, (initial_slots, slots)
 
@@ -852,6 +932,20 @@ class SlotAutoEncoder(nn.Module):
         return self.likelihood.sample(xh, return_loc, t=t), recons, masks, attn_maps, slots
 
 
+    def decode_slots(
+        self, slots: Tensor,
+        t: Optional[float] = None
+    ) -> Tensor:
+
+        zs = self.slot_attention.decoder_transformation(slots)
+        xh = self.decoder(zs)
+        
+        if not self.no_additive_decoder:
+            xh, recons, masks = self.slotpixel_competition(bs, xh)
+        else:
+            xh = self.projection(xh)
+
+        return self.likelihood.sample(xh, t=t)[0]
 
     @torch.no_grad()
     def forward_latents(
