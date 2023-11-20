@@ -9,7 +9,7 @@ from torch import Tensor, nn
 from einops import rearrange, reduce, repeat
 
 EPS = -9  # minimum logscale
-
+activation = nn.ReLU()
 
 @torch.jit.script
 def gaussian_kl(
@@ -48,18 +48,23 @@ class Block(nn.Module):
         self.residual = residual
         padding = 0 if kernel_size == 1 else 1
 
-        if version == "light":  # uses less VRAM
+        if version == "vlight":  # uses less VRAM
             activation = nn.ReLU()
             self.conv = nn.Sequential(
-                activation,
+                nn.Conv2d(in_width, out_width, kernel_size, 1, padding),
+                activation
+            )
+        elif version == "light":  # uses less VRAM
+            activation = nn.ReLU()
+            self.conv = nn.Sequential(
                 nn.Conv2d(in_width, bottleneck, kernel_size, 1, padding),
                 activation,
                 nn.Conv2d(bottleneck, out_width, kernel_size, 1, padding),
+                activation,
             )
         else:  # for morphomnist
             activation = nn.GELU()
             self.conv = nn.Sequential(
-                activation,
                 nn.Conv2d(in_width, bottleneck, 1, 1),
                 activation,
                 nn.Conv2d(bottleneck, bottleneck, kernel_size, 1, padding),
@@ -67,6 +72,7 @@ class Block(nn.Module):
                 nn.Conv2d(bottleneck, bottleneck, kernel_size, 1, padding),
                 activation,
                 nn.Conv2d(bottleneck, out_width, 1, 1),
+                activation,
             )
 
         if self.residual and (self.d or in_width > out_width):
@@ -97,6 +103,7 @@ class Encoder(nn.Module):
         super().__init__()
         # parse architecture
         stages = []
+        activation = nn.ReLU()
         for i, stage in enumerate(args.enc_arch.split(",")):
             start = stage.index("b") + 1
             end = stage.index("d") if "d" in stage else None
@@ -109,13 +116,18 @@ class Encoder(nn.Module):
                     continue
                 else:
                     stem_width, stem_stride = args.channels[0], 1
-                self.stem = nn.Conv2d(
-                    args.input_channels,
-                    stem_width,
-                    kernel_size=7,
-                    stride=stem_stride,
-                    padding=3,
+                self.stem = nn.Sequential(
+                    nn.Conv2d(
+                            args.input_channels,
+                            stem_width,
+                            kernel_size=7,
+                            stride=stem_stride,
+                            padding=3,
+                            ),
+                    activation
                 )
+
+
             stages += [(args.channels[i], None) for _ in range(n_blocks)]
             if "d" in stage:  # downsampling block
                 stages += [(args.channels[i + 1], int(stage[stage.index("d") + 1]))]
@@ -127,7 +139,7 @@ class Encoder(nn.Module):
                 Block(prev_width, bottleneck, width, down_rate=d, version=args.vr)
             )
         for b in blocks:
-            b.conv[-1].weight.data *= np.sqrt(1 / len(blocks))
+            b.conv[-2].weight.data *= np.sqrt(1 / len(blocks))
         self.blocks = nn.ModuleList(blocks)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -190,8 +202,8 @@ class DGaussNet(nn.Module):
             args.input_channels, args.input_channels, kernel_size=1, stride=1
         )
 
-        # if args.input_channels == 3:
-        #     self.channel_coeffs = nn.Conv2d(args.input_channels, 3, kernel_size=1, stride=1)
+        if args.input_channels == 3:
+            self.channel_coeffs = nn.Conv2d(args.input_channels, 3, kernel_size=1, stride=1)
 
         if args.std_init > 0:  # if std_init=0, random init weights for diag cov
             nn.init.zeros_(self.x_logscale.weight)
@@ -317,7 +329,10 @@ class SlotAttentionWithPositions(nn.Module):
 
         self.embedding_dim = args.channels[-1]
 
-        self.EM = args.stochastic_slots
+        self.EM = args.EM_slots.split('_')[0].lower() == 'yes'
+        if self.EM: self.EM_type = args.EM_slots.split('_')[1].lower()
+        if self.EM: self.EM_map = args.EM_slots.split('_')[2].lower() == 'map'
+
         self.no_additive_decoder = args.no_additive_decoder
 
         self.init_spatial_resolution = args.initial_decoder_spatial_resolution
@@ -325,25 +340,27 @@ class SlotAttentionWithPositions(nn.Module):
         self.eps = 1e-8
         self.scale = self.key_dim ** -0.5
 
-
+        activation = nn.ReLU() # nn.GELU()
         # =====================================================
-        self.to_q = nn.Linear(self.key_dim, self.key_dim)
-        self.to_k = nn.Linear(self.embedding_dim, self.key_dim)
-        self.to_v = nn.Linear(self.embedding_dim, self.key_dim)
-
-        if self.use_gru:
-            self.gru  = nn.GRUCell(self.key_dim, self.key_dim)
-
-
-        # slot transformation
-        self.norm_pre_ff         = nn.LayerNorm(self.key_dim)
-        self.slot_transformation = nn.Sequential(nn.Linear(self.key_dim, self.key_dim),
-                                                nn.GELU(),
-                                                nn.Linear(self.key_dim, self.embedding_dim),
-                                                nn.GELU())
-
         self.norm_input  = nn.LayerNorm(self.embedding_dim)
-        self.norm_slots  = nn.LayerNorm(self.key_dim)
+
+        if (not self.EM) or (self.EM_type == 'dynamic'):
+            self.to_q = nn.Linear(self.key_dim, self.key_dim)
+            self.to_k = nn.Linear(self.embedding_dim, self.key_dim)
+            self.to_v = nn.Linear(self.embedding_dim, self.key_dim)
+
+            if self.use_gru:
+                self.gru  = nn.GRUCell(self.key_dim, self.key_dim)
+
+
+            # slot transformation
+            self.norm_pre_ff         = nn.LayerNorm(self.key_dim)
+            self.slot_transformation = nn.Sequential(nn.Linear(self.key_dim, self.key_dim),
+                                                    activation,
+                                                    nn.Linear(self.key_dim, self.embedding_dim),
+                                                    activation)
+
+            self.norm_slots  = nn.LayerNorm(self.key_dim)
 
 
         self.deterministic_slot_init = args.model in ['SSA', 'SSAU']
@@ -362,25 +379,25 @@ class SlotAttentionWithPositions(nn.Module):
                 self.stochastic_slots = True
                 self.z_to_slots = nn.Sequential(
                                 nn.Linear(self.embedding_dim, self.key_dim),
-                                nn.GELU(),
+                                activation,
                                 nn.Linear(self.key_dim, self.key_dim),
                             )
 
                 self.slots_loc = nn.Sequential(
                                 nn.Linear(self.key_dim, self.key_dim),
-                                nn.GELU(),
+                                activation,
                                 nn.Linear(self.key_dim, self.key_dim),
                             )
 
                 self.slots_logscale = nn.Sequential(
                                 nn.Linear(self.key_dim, self.key_dim),
-                                nn.GELU(),
+                                activation,
                                 nn.Linear(self.key_dim, self.key_dim),
                             )
         else:
             self.init_slot_transformation = nn.Sequential(
                             nn.Linear(self.embedding_dim , self.key_dim),
-                            nn.GELU(),
+                            activation,
                             nn.Linear(self.key_dim, self.key_dim),
                         )
 
@@ -397,9 +414,9 @@ class SlotAttentionWithPositions(nn.Module):
         self.encoder_norm        = nn.LayerNorm([ntokens, self.embedding_dim])
         self.encoder_position    = SoftPositionEmbed(self.embedding_dim, (res, res))
         self.encoder_feature_mlp = nn.Sequential(nn.Linear(self.embedding_dim, self.embedding_dim),
-                                                nn.GELU(),
+                                                activation,
                                                 nn.Linear(self.embedding_dim, self.embedding_dim),
-                                                nn.GELU())
+                                                activation)
 
 
         # ============================================
@@ -411,7 +428,7 @@ class SlotAttentionWithPositions(nn.Module):
         if self.no_additive_decoder:
             layers = []
 
-            nblocks = 2
+            nblocks = 1
             for iconv in range(nblocks):
                 block = nn.Sequential(
                                 Block(self.key_dim,
@@ -432,7 +449,7 @@ class SlotAttentionWithPositions(nn.Module):
                                         residual=False,
                                         version=args.vr,
                                     ))
-            self.decode   = nn.Sequential(*layers)
+            self.decode = nn.Sequential(*layers)
 
 
     def get_stochastic_initial_slots(self, 
@@ -456,7 +473,7 @@ class SlotAttentionWithPositions(nn.Module):
 
 
         slots = slots_loc.unsqueeze(1) +\
-                (0.5*slots_logscale).unsqueeze(1).exp() * torch.randn(
+                (slots_logscale).unsqueeze(1).exp() * torch.randn(
                     nsamples, nslots, self.key_dim, device=device
                 )
 
@@ -477,7 +494,7 @@ class SlotAttentionWithPositions(nn.Module):
 
         b, n, c = features_loc.shape
         xslot = (features_loc.unsqueeze(1) + \
-                    (0.5*features_logscale).exp().unsqueeze(1) * torch.randn(
+                    (features_logscale).exp().unsqueeze(1) * torch.randn(
                         b, nslots, n, c, device=features_loc.device)).mean(2)
 
         return self.init_slot_transformation(xslot)
@@ -524,7 +541,6 @@ class SlotAttentionWithPositions(nn.Module):
                     k: Tensor, 
                     v: Tensor) -> Tuple[Tensor, Tensor]:
 
-
         slots_prev= self.norm_slots(slots_prev)
         q = self.to_q(slots_prev)
 
@@ -549,6 +565,7 @@ class SlotAttentionWithPositions(nn.Module):
 
     def EM_step(self, slots_prev: Tensor,
                     sigma_prev :Tensor, 
+                    sigma_initial: Tensor,
                     pi_prev: Tensor,
                     k: Tensor, 
                     v: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
@@ -560,31 +577,37 @@ class SlotAttentionWithPositions(nn.Module):
         b , N, d = k.shape
         _, K, _ = slots_prev.shape
 
-        sigma_prev = sigma_prev**2
-
         slots_prev= self.norm_slots(slots_prev)
-        q = self.to_q(slots_prev)
+        q_transform = self.to_q(slots_prev)
+
 
         # E-step
-
-        KSigmaKT = torch.einsum('bkjd, bjd -> bkj', k.unsqueeze(1)/sigma_prev.unsqueeze(2), k)/(N*K) # B x K x N
-        QSigmaQT = torch.einsum('bjnd, bjd -> bjn', q.unsqueeze(2)/sigma_prev.unsqueeze(2), q)/K # B x K x 1 
-        QSigmaKT = torch.einsum('bid, bjd -> bij', q/sigma_prev, k) # B x K x N 
-
-        dots = -(KSigmaKT + QSigmaQT - 2*QSigmaKT) +\
-                torch.log(torch.clamp(pi_prev, min=1e-6)) -\
-                torch.log(torch.clamp(np.sqrt(2*np.pi)* torch.norm(sigma_prev, 2, keepdim=True), min=1e-6))
-        
-        attn = dots.softmax(dim=1) + self.eps
-        
+        log_pi    = - 0.5 * torch.tensor(2 * torch.pi, device=k.device).log()
+        log_scale = - torch.log(torch.clamp(sigma_prev.unsqueeze(2), min = self.eps)) # (B, K, 1, d)
+        exponent  = - 0.5 * (k.unsqueeze(1) - q_transform.unsqueeze(2)) ** 2 / (sigma_prev.unsqueeze(2)) ** 2 # (B, K, N, d)
+        log_probs = torch.log(torch.clamp(pi_prev, min = self.eps)) + (exponent + log_pi + log_scale).sum(dim=-1) # (B, K, N)
+                         
+        attn = log_probs.softmax(dim=1) + self.eps # (B, K, N)
 
 
         # M-step
-        Nk = attn.sum(dim=-1, keepdim=True)
-        pi = Nk/N
-        slots = torch.einsum('bjd,bij->bid', v, attn)/Nk
+        Nk = torch.sum(attn, dim=2, keepdim=True) # (B, K, 1)
+        pi = Nk / N
+        
+        slots = (1 / Nk) * torch.sum(attn.unsqueeze(-1) * v.unsqueeze(1), dim=2) # (B, K, D)
 
-        if self.use_gru:
+        
+        if not self.EM_map:
+            sigma = (1 / Nk) * torch.sum(attn.unsqueeze(-1) * (k.unsqueeze(1) - \
+                                                        self.to_q(slots).unsqueeze(2))**2, dim=2) # (B, K, D)
+        else:
+            sigma = (sigma_initial + torch.sum(attn.unsqueeze(-1) * (k.unsqueeze(1) - \
+                                        slots_prev.unsqueeze(2)) ** 2, dim=2)) / (Nk + 2*d + 4)  # (B, K, D)
+    
+            
+        sigma = torch.sqrt(sigma) + self.eps
+
+        if self.use_gru:   
             slots = self.gru(
                 rearrange(slots, 'b n d -> (b n) d'),
                 rearrange(slots_prev, 'b n d -> (b n) d')
@@ -594,10 +617,46 @@ class SlotAttentionWithPositions(nn.Module):
 
         slots = slots + self.slot_transformation(self.norm_pre_ff(slots))
 
-        sigma = torch.einsum('bkjd,bkj->bkd', \
-                    (v.unsqueeze(1) - slots.unsqueeze(2))**2, attn)/Nk/(N*K) 
-        norm = torch.norm(sigma, 2, keepdim=True)
-        sigma = sigma/(norm + 1e-3)
+        return slots, pi, sigma, attn
+
+
+    def EM_fixed_step(self, slots_prev: Tensor,
+                    sigma_prev :Tensor, 
+                    sigma_initial: Tensor,
+                    pi_prev: Tensor,
+                    z: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+
+        # Sigma: K x d
+        # K: N x d
+        # pi_prev: K x 1
+
+        b , N, d = z.shape
+        _, K, _ = slots_prev.shape
+
+
+        # E-step
+        log_pi    = - 0.5 * torch.tensor(2 * torch.pi, device=z.device).log()
+        log_scale = - torch.log(torch.clamp(sigma_prev.unsqueeze(2), min = self.eps)) # (B, K, N, d)
+        exponent  = - 0.5 * (z.unsqueeze(1) - slots_prev.unsqueeze(2)) ** 2 / (sigma_prev.unsqueeze(2)) ** 2 # (B, K, N, d)
+        log_probs = torch.log(torch.clamp(pi_prev, min = self.eps)) + (exponent + log_pi + log_scale).sum(dim=-1) # (B, K, N)
+                         
+        attn = log_probs.softmax(dim=1) + self.eps # (B, K, N)
+
+
+        # M-step
+        Nk = torch.sum(attn, dim=2, keepdim=True) # (B, K, 1)
+        pi = Nk / N
+        
+        slots = (1 / Nk) * torch.sum(attn.unsqueeze(-1) * z.unsqueeze(1), dim=2) # (B, K, D)
+
+        if not self.EM_map:
+            sigma = (1 / Nk) * torch.sum(attn.unsqueeze(-1) * (z.unsqueeze(1) - \
+                                                        slots.unsqueeze(2))**2, dim=2) # (B, K, D)
+        else:
+            sigma = (sigma_initial + torch.sum(attn.unsqueeze(-1) * (z.unsqueeze(1) - \
+                                        slots_prev.unsqueeze(2)) ** 2, dim=2)) / (Nk + 2*d + 4)  # (B, K, D)
+    
+        sigma = torch.sqrt(sigma) + self.eps
 
         return slots, pi, sigma, attn
 
@@ -642,22 +701,29 @@ class SlotAttentionWithPositions(nn.Module):
         tokens = self.norm_input(tokens)        
 
 
-        k, v = self.to_k(tokens), self.to_v(tokens)
+        if (not self.EM) or (self.EM_type == 'dynamic'):
+            k, v = self.to_k(tokens), self.to_v(tokens)
 
 
         initial_slots = slots.clone()
 
         if self.EM:
             pi = torch.ones(b, num_slots, 1, device = slots.device, dtype = slots.dtype)/num_slots
-            sigma, slots = init_slot_logscale.squeeze().unsqueeze(1).repeat(1, num_slots, 1), slots
-            sigma = (0.5*sigma).exp()
+            sigma = init_slot_logscale.squeeze().unsqueeze(1).repeat(1, num_slots, 1)
+            sigma = sigma.exp() + self.eps
+
+            sigma_initial = torch.var(tokens, dim=1, keepdim=True) + self.eps # B, 1, d
+            sigma_initial /= (num_slots**(1/d))
 
 
         for _ in range(self.niters):
             if not self.EM:
                 slots, attn = self.step(slots, k, v)    
             else:
-                slots, pi, sigma, attn = self.EM_step(slots, sigma, pi, k, v)
+                if self.EM_type == 'dynamic':
+                    slots, pi, sigma, attn = self.EM_step(slots, sigma, sigma_initial, pi, k, v)
+                else:
+                    slots, pi, sigma, attn = self.EM_fixed_step(slots, sigma, sigma_initial, pi, tokens)
 
 
 
@@ -665,12 +731,16 @@ class SlotAttentionWithPositions(nn.Module):
             if not self.EM:
                 slots, attn = self.step(slots.detach(), k, v)    
             else:
-                slots, pi, sigma, attn = self.EM_step(slots.detach(), sigma, pi, k, v)
+                if self.EM_type == 'dynamic':
+                    slots, pi, sigma, attn = self.EM_step(slots, sigma, pi, k, v)
+                else:
+                    slots, pi, sigma, attn = self.EM_fixed_step(slots, sigma, pi, tokens)
 
 
+        # print (sigma.max(), sigma.min(), sigma.mean(), torch.var(attn, 1).mean())
 
-        if self.EM:               
-            slots = slots + sigma * torch.randn_like(slots)
+        # if self.EM:     
+        #     slots = slots + sigma * torch.randn_like(slots)
 
 
         return self.decoder_transformation(slots), attn, slot_loss, (initial_slots, slots)
@@ -679,15 +749,10 @@ class SlotAttentionWithPositions(nn.Module):
 class SlotAutoEncoder(nn.Module):
     def __init__(self, args):
         super().__init__()
-        args.vr = "light" if "ukbb" in args.hps else None  # hacky
+        args.vr = "vlight" # if "ukbb" in args.hps else None  # hacky
         self.encoder = Encoder(args)
-        self.decoder = Decoder(args)
 
-        self.num_slots = args.nslots
-        self.no_additive_decoder = args.no_additive_decoder
-        self.slot_attention = SlotAttentionWithPositions(args)
-
-        variational_models = ['VSA', 'VASA', 'SSA', 'SSAU']
+        variational_models = ['VAE', 'VSA', 'VASA', 'SSA', 'SSAU']
         bottleneck = args.channels[-1]//args.bottleneck
 
         self.variational_latents = args.model in variational_models
@@ -734,6 +799,35 @@ class SlotAutoEncoder(nn.Module):
                     self.register_buffer("logscale_p_z", torch.ones(1, self.latent_dim, res, res))
            
 
+      
+        
+
+        # ========================================================
+        self.model = args.model.lower() 
+        if args.model.lower() == 'vae':
+            self.no_additive_decoder = args.no_additive_decoder = True
+            eres = int(args.enc_arch.split(',')[-1].split('b')[0])
+            dblock = args.dec_arch.split(',')[0]
+
+            dres = int(dblock.split('b')[0])
+            usample = int(dblock.split('u')[-1])
+            ndblock = dblock.replace(f'{dres}b', f'{eres}b')
+            ndblock = ndblock.replace(f'u{usample}', f'u{int(dres*usample/eres)}')
+            
+            args.dec_arch = args.dec_arch.replace(dblock, ndblock)
+
+        else:
+
+            self.num_slots = args.nslots
+            self.no_additive_decoder = args.no_additive_decoder
+            self.slot_attention = SlotAttentionWithPositions(args)
+    
+
+        self.decoder = Decoder(args)
+
+        # ========================================================
+
+
         if not self.no_additive_decoder:
             self.projection = nn.Conv2d(
                             args.channels[0], 
@@ -747,8 +841,15 @@ class SlotAutoEncoder(nn.Module):
                             kernel_size=1, stride=1
                         )
 
-        if args.x_like.split("_")[1] == "dgauss":
+
+
+
+        if args.x_like == 'mse':
+            self.likelihood = nn.MSELoss()
+            self.x_like = 'mse'
+        elif args.x_like.split("_")[1] == "dgauss":
             self.likelihood = DGaussNet(args)
+            self.x_like = 'dgauss'
         else:
             NotImplementedError(f"{args.x_like} not implemented.")
         
@@ -771,10 +872,10 @@ class SlotAutoEncoder(nn.Module):
         loc = loc.flatten(0, 1)
         logscale = logscale.flatten(0, 1)
 
-        scale = torch.exp(0.5 * logscale)
+        scale = torch.exp(logscale)
         q_z = dist.Normal(loc, scale)
 
-        std_pz_c = torch.exp(0.5 *self.logscale_p_z)
+        std_pz_c = torch.exp(self.logscale_p_z)
         pz_c = dist.Independent(dist.Normal(loc=self.mu_p_z, scale=std_pz_c), 1)
 
         log_prob_pz_c = pz_c.log_prob(z.unsqueeze(-2))
@@ -806,7 +907,7 @@ class SlotAutoEncoder(nn.Module):
     def get_latents(self, h: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
 
         loc, logscale = self.posterior(h).chunk(2, dim=1)
-        z = loc + (0.5*logscale).exp()*torch.randn_like(loc)
+        z = loc + (logscale).exp()*torch.randn_like(loc)
 
         if self.zprior_type == 'gmm':
             kl_loss = self._mixture_kl_loss(z, loc, logscale)
@@ -844,16 +945,25 @@ class SlotAutoEncoder(nn.Module):
             h, h_loc, h_logscale, kl_loss = self.get_latents(h)
             stats.append(dict(kl=kl_loss))
 
-        zs, attn, slot_kl_loss, _ = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
-        stats.append(dict(kl=slot_kl_loss))
-
+        if not (self.model == 'vae'):
+            zs, attn, slot_kl_loss, _ = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
+            stats.append(dict(kl=slot_kl_loss))
+        else:
+            zs = h
         xh = self.decoder(zs)
         if not self.no_additive_decoder:
             xh, recons, masks = self.slotpixel_competition(x.shape[0], xh)
         else:
             xh = self.projection(xh)
 
-        nll_pp = self.likelihood.nll(xh, x)
+
+        
+        if self.x_like == 'mse':
+            nll_pp = self.likelihood(xh, x)
+        else:
+            nll_pp = self.likelihood.nll(xh, x)
+
+
 
 
         if self.free_bits > 0:
@@ -889,9 +999,9 @@ class SlotAutoEncoder(nn.Module):
         # only in when self.variational_latents is True
 
         def __vae_latents__():
-            z_dist = dist.Normal(loc = torch.zeros(self.latent_dim, self.res, self.res), 
-                                    scale= torch.ones(self.latent_dim, self.res, self.res))
-            z_samples = z_dist.sample((nsamples,)).to(device)
+            z_dist = dist.Normal(loc = self.mu_p_z, 
+                                    scale = torch.exp(self.logscale_p_z))
+            z_samples = z_dist.sample((nsamples,)).to(device).squeeze(1)
 
             return z_samples
 
@@ -907,20 +1017,28 @@ class SlotAutoEncoder(nn.Module):
                 c_samples = p_c.sample((nsamples * self.res * self.res, )).to(device)
 
                 loc = c_samples @ self.mu_p_z
-                scale = c_samples @ torch.exp(0.5 * self.logscale_p_z)
+                scale = c_samples @ torch.exp(self.logscale_p_z)
                 pz_c = dist.Normal(loc=loc, scale=scale)
                 h = pz_c.sample().to(device)
                 h = h.view(nsamples, self.latent_dim, self.res, self.res)
             else:
                 c_samples = torch.tensor(np.eye(self.num_components, dtype=np.float32)).to(device)
                 loc = c_samples @ self.mu_p_z
-                scale = c_samples @ torch.exp(0.5 * self.logscale_p_z)
+                scale = c_samples @ torch.exp(self.logscale_p_z)
                 pz_c = dist.Normal(loc=loc, scale=scale)
                 h = pz_c.sample((nsamples * self.res * self.res,))
                 h = h.view(nsamples, self.latent_dim, self.res, self.res)
 
-        h_loc, h_logscale = torch.zeros_like(h), torch.ones_like(h) 
-        zs, attn_maps, _, slots = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
+        h_loc = self.mu_p_z.repeat(nsamples, 1, 1, 1)
+        h_logscale = torch.exp(self.logscale_p_z).repeat(nsamples, 1, 1, 1) 
+
+        if not (self.model == 'vae'):
+            zs, attn_maps, _, slots = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
+        else:
+            attn_maps = None
+            slots = None
+            zs = h
+
 
         xh = self.decoder(zs)
         recons = None; masks = None
@@ -928,6 +1046,10 @@ class SlotAutoEncoder(nn.Module):
             xh, recons, masks = self.slotpixel_competition(nsamples, xh)
         else:
             xh = self.projection(xh)
+
+
+        if not isinstance(self.likelihood, DGaussNet):
+            return (xh, _), recons, masks, attn_maps, slots
 
         return self.likelihood.sample(xh, return_loc, t=t), recons, masks, attn_maps, slots
 
@@ -945,6 +1067,9 @@ class SlotAutoEncoder(nn.Module):
         else:
             xh = self.projection(xh)
 
+        if not isinstance(self.likelihood, DGaussNet):
+            return (xh, _)
+
         return self.likelihood.sample(xh, t=t)[0]
 
     @torch.no_grad()
@@ -961,7 +1086,12 @@ class SlotAutoEncoder(nn.Module):
             latents, h_loc, h_logscale, kl_loss = self.get_latents(latents)
 
 
-        zs, attn_maps, _, slots = self.slot_attention(latents, h_loc, h_logscale, properties, num_slots)
+        if not (self.model == 'vae'):
+            zs, attn_maps, _, slots = self.slot_attention(latents, h_loc, h_logscale, properties, num_slots)
+        else:
+            attn_maps = None
+            slots = None
+            zs = latents
 
         xh = self.decoder(zs)
         recons = None; masks = None
@@ -969,5 +1099,8 @@ class SlotAutoEncoder(nn.Module):
             xh, recons, masks = self.slotpixel_competition(bs, xh)
         else:
             xh = self.projection(xh)
+
+        if not isinstance(self.likelihood, DGaussNet):
+            return (xh,_), recons, masks, attn_maps, slots
 
         return self.likelihood.sample(xh, t=t), recons, masks, attn_maps, slots

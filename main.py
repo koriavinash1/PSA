@@ -79,9 +79,10 @@ def main(args: Hparams):
         for p_group in optimizer.param_groups:
             p_group["lr"] = args.lr
             p_group["initial_lr"] = args.lr  # needed to init the scheduler lr
-        scheduler = torch.optim.lr_scheduler.LambdaLR(
-            optimizer, lr_lambda=lambda x: x * 0 + 1
-        )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', 
+                                                patience=3,
+                                                factor=0.5,
+                                                verbose = True)
         args.start_epoch, args.iter = ckpt["epoch"], ckpt["step"]
         args.best_loss = ckpt["best_loss"]
         del ckpt  # remove reference to checkpoint

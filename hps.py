@@ -17,7 +17,7 @@ PNG_DATA_ROOT = '/vol/biomedic2/agk21/PhDLogs/datasets/'
 
 clevr = Hparams()
 clevr.learning_rate = 2e-4
-clevr.batch_size = 64
+clevr.batch_size = 32
 clevr.weight_decay = 0.01
 clevr.input_res = 64
 clevr.pad = 4
@@ -26,7 +26,7 @@ clevr.nconditions = 0
 clevr.max_num_obj = 7
 clevr.enc_arch = "64b1d2,32b1d2,16b1d2,8b1"
 clevr.dec_arch = "8b1u2,16b1u2,32b1u2,64b1"
-clevr.channels = [16, 32, 64, 128]
+clevr.channels = [16, 32, 64, 64]
 # clevr.data_dir = os.path.join(HDF5_DATA_ROOT, 'clevr_10-full.hdf5')
 HPARAMS_REGISTRY["clevr"] = clevr
 
@@ -193,7 +193,7 @@ def add_arguments(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--lr_warmup_steps", 
         help="lr warmup steps.", 
-        type=int, default=100000
+        type=int, default=5000
     )
     parser.add_argument(
         "-wd",
@@ -236,7 +236,7 @@ def add_arguments(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--grad_clip", 
         help="Gradient clipping value.", 
-        type=float, default=200
+        type=float, default=100
     )
     parser.add_argument(
         "--grad_skip", 
@@ -271,13 +271,13 @@ def add_arguments(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--eval_freq", 
         help="Train epochs per validation.", 
-        type=int, default=5
+        type=int, default=10
     )
 
     # model
     parser.add_argument(
         "--model",
-        help="SA model: SA/ASA/VSA/VASA/SSA/SSAU.",
+        help="SA model: VAE/SA/ASA/VSA/VASA/SSA/SSAU.",
         type=str,
         default="SA",
     )
@@ -314,7 +314,7 @@ def add_arguments(parser: argparse.ArgumentParser):
     )
     parser.add_argument(
         "--x_like",
-        help="x likelihood: {fixed/shared/diag}_{gauss/dgauss}.",
+        help="x likelihood: {fixed/shared/diag}_{gauss/dgauss} or mse.",
         type=str,
         default="diag_dgauss",
     )
@@ -383,7 +383,9 @@ def add_arguments(parser: argparse.ArgumentParser):
         default=False)
     
     parser.add_argument(
-        "--stochastic_slots", 
-        action="store_true",
-        default=False)
+        "--EM_slots",
+        help="apply EM iterations: {yes/no}_{fixed/dynamic}_{map/mle}.",
+        type=str,
+        default="no",
+    )
     return parser

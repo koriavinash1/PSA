@@ -265,69 +265,65 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
     viz_images.append(orig * 0)
 
 
-    _, kslots, ntokens = attn.shape 
+    if not (attn is None): _, kslots, ntokens = attn.shape 
 
-    # slot_recons
-    # for ik in range(kslots):
-    #     recon_slot = recons[:, ik, ...]
-    #     recon_slot, _ = model.likelihood(recon_slot) 
-    #     slots = recon_slot * masks[:, ik, ...]
-    #     slots = slots.permute(0, 2, 3, 1)
-    #     viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
-
-    # viz_images.append(orig * 0)
 
     if not (recons is None):
         for ik in range(kslots):
             recon_slot = recons[:, ik, ...]
-            recon_slot, _ = model.likelihood(recon_slot)
+
+            if not (model.x_like == 'mse'):
+                recon_slot, _ = model.likelihood(recon_slot)
+
             slots = recon_slot * masks[:, ik, ...] + (1 - masks[:, ik, ...])
             slots = slots.permute(0, 2, 3, 1)
             viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
 
         viz_images.append(orig * 0)
 
+    if not (attn is None):
+        # plot slots at each resolution
+        attn = attn * attn.sum(-1, keepdim = True)
+        attn = attn.view(bs, kslots, 
+                            int(ntokens**0.5), 
+                            int(ntokens**0.5))
+        _,_, h_enc, w_enc = attn.shape
 
-    # plot slots at each resolution
-    attn = attn * attn.sum(-1, keepdim = True)
-    attn = attn.view(bs, kslots, 
-                        int(ntokens**0.5), 
-                        int(ntokens**0.5))
-    _,_, h_enc, w_enc = attn.shape
+        attn = attn.repeat_interleave(h // h_enc, dim=-2).repeat_interleave(w // w_enc, dim=-1)
+        attn = attn.detach().cpu().numpy()
+        
+        for ik in range(kslots):
+            attn_viz = attn[:, ik, :, :][:, :, :, None]
+            attn_viz = attn_viz*orig
+            attn_viz = normalize(attn_viz)
 
-    attn = attn.repeat_interleave(h // h_enc, dim=-2).repeat_interleave(w // w_enc, dim=-1)
-    attn = attn.detach().cpu().numpy()
-    
+            viz_images.append((attn_viz).astype(np.uint8))
+            
+        viz_images.append(orig * 0)
+
     # for ik in range(kslots):
     #     attn_viz = attn[:, ik, :, :][:, :, :, None]
-    #     attn_viz = attn_viz*orig
+    #     attn_viz = attn_viz*orig + (1.0 - attn_viz)
     #     attn_viz = normalize(attn_viz)
 
     #     viz_images.append((attn_viz).astype(np.uint8))
         
     # viz_images.append(orig * 0)
 
-    for ik in range(kslots):
-        attn_viz = attn[:, ik, :, :][:, :, :, None]
-        attn_viz = attn_viz*orig + (1.0 - attn_viz)
-        attn_viz = normalize(attn_viz)
 
-        viz_images.append((attn_viz).astype(np.uint8))
-        
-    viz_images.append(orig * 0)
+    temperatures = [1.0]
+    if not (model.x_like == 'mse'):
+        temperatures = np.arange(0.1, 1.0, 0.1)
 
-
-
-    if args.model in ['VSA', 'VASA', 'SSA', 'SSAU']:
+    if args.model in ['VAE', 'VSA', 'VASA', 'SSA', 'SSAU']:
         nsamples = orig.shape[0]
-        for temp in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
+        for temp in temperatures:
             (x_rec, _), recons, masks, attn, slots = model.sample(nsamples, 
                                                             device = device, 
                                                             properties = batch['properties'], 
                                                             return_loc=True, t=temp)
             x_rec = postprocess(x_rec)
 
-            _, kslots, ntokens = attn.shape 
 
             # slot_recons
             # for ik in range(kslots):
@@ -340,7 +336,10 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
             if not (recons is None):
                 for ik in range(kslots):
                     recon_slot = recons[:, ik, ...]
-                    recon_slot, _ = model.likelihood(recon_slot)
+
+                    if not (model.x_like == 'mse'):
+                        recon_slot, _ = model.likelihood(recon_slot)
+
                     slots = recon_slot * masks[:, ik, ...] + (1 - masks[:, ik, ...])
                     slots = slots.permute(0, 2, 3, 1)
                     viz_images.append(normalize(slots.detach().cpu().numpy()).astype(np.uint8))
