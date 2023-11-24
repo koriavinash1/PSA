@@ -315,8 +315,14 @@ def write_images(args: Hparams, model: nn.Module, batch: Dict[str, Tensor]):
     if not (model.x_like == 'mse'):
         temperatures = np.arange(0.1, 1.0, 0.1)
 
-    if args.model in ['VAE', 'VSA', 'VASA', 'SSA', 'SSAU']:
+    if (args.model in ['VAE', 'VSA', 'VASA', 'SSA', 'SSAU']) or (args.EM_slots.split('_')[0].lower() == 'yes'):
         nsamples = orig.shape[0]
+
+        if (args.EM_slots.split('_')[0].lower() == 'yes'):
+            model.generate_slot_aggregate_posterior(latents = zs, 
+                                                properties = batch['properties'])
+
+                                                
         for temp in temperatures:
             (x_rec, _), recons, masks, attn, slots = model.sample(nsamples, 
                                                             device = device, 

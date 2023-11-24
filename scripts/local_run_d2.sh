@@ -5,20 +5,21 @@ for HPS in clevr #_tex tetrominoes objects_room multidsprites
 do
     LOGSDIR="/vol/biomedic3/agk21/CoSA/SAModelling/EMLOGS-RandomSeeds/$HPS"
 
-    for MODEL in VAE
+    for MODEL in SA
     do
-        for RUN in 1 2 3
+        for RUN in 1 # 2 3
         do
         
             RUNCMD="/vol/biomedic3/agk21/CoSA/SAModelling/main.py \
-                    --exp_name $MODEL-shared-noch-highsd-init \
+                    --exp_name $MODEL-EM-aggregate-posterior \
                     --model $MODEL \
                     --hps $HPS \
                     --ckpt_dir $LOGSDIR \
                     --x_like shared_dgauss \
                     --std_init 1.0 \
-                    --learning_rate 0.001 \
+                    --learning_rate 0.0002 \
                     --run_idx $RUN \
+                    --EM_slots yes_fixed_mle \
                     --learn_prior"
             echo $RUNCMD
             CUDA_VISIBLE_DEVICES=0 python $RUNCMD

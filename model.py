@@ -37,7 +37,7 @@ class Block(nn.Module):
         bottleneck: int,
         out_width: int,
         kernel_size: int = 3,
-        residual: bool = True,
+        residual: bool = False,
         down_rate: Optional[int] = None,
         upsample_rate: Optional[int] = None,
         version: Optional[str] = None,
@@ -296,6 +296,66 @@ class DGaussNet(nn.Module):
         return x, logscale.exp()
 
 
+
+class GaussSlotConditioningNet(nn.Module):
+    def __init__(self, args):
+        super(GaussSlotConditioningNet, self).__init__()
+        slot_dim = 5
+        condition_info = args.compositional_conditioning
+
+        nconditions = 0
+        if 'color' in condition_info.lower():
+            nconditions += 4 # R, G, B,Mask 
+        
+        if 'com' in condition_info.lower():
+            nconditions += 2
+
+
+        resolution = (args.input_res, args.input_res)
+        xy = [torch.linspace(0.0, 1.0, steps=r) for r in resolution]
+        xx, yy = torch.meshgrid(xy, indexing="ij")
+        grid = torch.stack([xx, yy], dim=-1)
+        grid = grid.unsqueeze(0)
+        
+        self.x_loc = nn.Linear(slot_dim, nconditions)
+        self.x_logscale = nn.Linear(slot_dim, nconditions)
+
+        if self.learn_cprior:
+            self.mu_p_c = nn.Parameter(torch.zeros(1, nconditions), requires_grad=True)
+            nn.init.xavier_normal_(self.mu_p_c)
+
+            self.logscale_p_c = nn.Parameter(torch.ones(1, nconditions), requires_grad=True)
+            nn.init.xavier_normal_(self.logscale_p_c)
+        else:
+            self.register_buffer("mu_p_c", torch.zeros(1, nconditions))
+            self.register_buffer("logscale_p_c", torch.ones(1, nconditions))
+
+    
+    def forward(
+        self, h: Tensor, t: Optional[float] = None
+    ) -> Tuple[Tensor, Tensor]:
+        # H: B, C, H, W
+        # TODO: need further thinking
+        # com = 
+        loc, logscale = self.x_loc(h), self.x_logscale(h).clamp(min=EPS)
+
+        if t is not None:
+            logscale = logscale + torch.tensor(t).to(h.device).log()
+        return loc, logscale
+
+
+    def sample(
+        self, return_loc: bool = True, t: Optional[float] = None
+    ) -> Tuple[Tensor, Tensor]:
+        if return_loc:
+            x, logscale = self.forward(h)
+        else:
+            loc, logscale = self.forward(h, t)
+            x = loc + torch.exp(logscale) * torch.randn_like(loc)
+        x = torch.clamp(x, min=-1.0, max=1.0)
+        return x, logscale.exp()
+
+
 class SoftPositionEmbed(nn.Module):
     def __init__(self, out_channels: int, resolution: Tuple[int, int]):
         super().__init__()
@@ -315,6 +375,8 @@ class SoftPositionEmbed(nn.Module):
         grid = torch.stack([xx, yy], dim=-1)
         grid = grid.unsqueeze(0)
         return torch.cat([grid, 1.0 - grid], dim=-1)
+
+
 
 
 class SlotAttentionWithPositions(nn.Module):
@@ -403,7 +465,7 @@ class SlotAttentionWithPositions(nn.Module):
 
       
         nconditions = args.nconditions
-        if (nconditions > 0) and (args.model == 'SSAU'):
+        if (nconditions > 0):
             self.conditioning = nn.Linear(self.key_dim + nconditions, self.key_dim)
 
 
@@ -479,6 +541,85 @@ class SlotAttentionWithPositions(nn.Module):
 
         return (slots, slots_loc.unsqueeze(-1).unsqueeze(-1),\
                  slots_logscale.unsqueeze(-1).unsqueeze(-1))
+
+
+
+    def generate_aggregate_posterior(self, inputs: Tensor,
+                    routing_iters: int = 10,
+                    inputs_loc: Optional[Tensor] = None,
+                    inputs_logscale: Optional[Tensor] = None, 
+                    properties: Optional[Tensor] = None,
+                    num_slots: Optional[Tensor] = None) -> dist.MixtureSameFamily:
+        # x: b, c, h
+        
+        b, d, h, w = inputs.shape
+        
+        # =======================
+        # initialise slots 
+        if not self.deterministic_slot_init:
+            slots, init_slot_loc, init_slot_logscale = self.get_stochastic_initial_slots(inputs, 
+                                                                    nslots = num_slots, 
+                                                                    device= inputs.device)
+            if self.variational_slots:
+                slot_loss = gaussian_kl(init_slot_loc, 
+                                    init_slot_logscale, 
+                                    torch.zeros_like(init_slot_loc), 
+                                    torch.ones_like(init_slot_logscale))
+            else:
+                slot_loss = torch.zeros_like(inputs)
+        else:
+            slots = self.get_deterministic_initial_slots(inputs_loc, inputs_logscale, num_slots)
+            slot_loss = torch.zeros_like(inputs)
+
+
+        _, num_slots, _ = slots.shape
+        if hasattr(self, 'conditioning'):
+            slots = self.conditioning(torch.cat([slots, properties[:, :num_slots, :].to(slots.device)], dim = 2))
+
+
+        # ========================
+        tokens = self.encoder_transformation(inputs)
+        tokens = self.norm_input(tokens)        
+
+
+        if self.EM_type == 'dynamic':
+            k, v = self.to_k(tokens), self.to_v(tokens)
+
+
+        initial_slots = slots.clone()
+
+        pi = torch.ones(b, num_slots, 1, device = slots.device, dtype = slots.dtype)/num_slots
+        sigma = init_slot_logscale.squeeze().unsqueeze(1).repeat(1, num_slots, 1)
+        sigma = sigma.exp() + self.eps
+
+        sigma_initial = torch.var(tokens, dim=1, keepdim=True) + self.eps # B, 1, d
+        sigma_initial /= (num_slots**(1/d))
+
+
+        for _ in range(routing_iters):
+            if self.EM_type == 'dynamic':
+                slots, pi, sigma, attn = self.EM_step(slots, sigma, sigma_initial, pi, k, v)
+            else:
+                slots, pi, sigma, attn = self.EM_fixed_step(slots, sigma, sigma_initial, pi, tokens)
+
+
+
+        if self.implicit: 
+            if self.EM_type == 'dynamic':
+                slots, pi, sigma, attn = self.EM_step(slots, sigma, pi, k, v)
+            else:
+                slots, pi, sigma, attn = self.EM_fixed_step(slots, sigma, pi, tokens)
+
+
+        joint_pi = pi.flatten(0, 1)/slots.shape[0]
+        joint_sigma = sigma.flatten(0, 1) # B*K, d
+        joint_slots = slots.flatten(0, 1) # B*K, d
+        
+        mix = dist.Categorical(joint_pi.squeeze(1))
+        comp = dist.Independent(dist.Normal(joint_slots, joint_sigma), 1)
+
+        self.aggregate_posterior = dist.MixtureSameFamily(mix, comp)
+        return self.aggregate_posterior
 
 
 
@@ -758,6 +899,13 @@ class SlotAutoEncoder(nn.Module):
         self.variational_latents = args.model in variational_models
 
         if self.variational_latents:    
+            
+            self.zprior_type = args.zprior.lower()
+            self.learn_prior  = args.learn_prior  
+
+            self.latent_dim = args.channels[-1]
+            self.res = res = int(args.enc_arch.split(',')[-1].split('b')[0])
+
 
             self.posterior = Block(
                             args.channels[-1],
@@ -767,11 +915,12 @@ class SlotAutoEncoder(nn.Module):
                             version=args.vr,
                         )
 
-            self.zprior_type = args.zprior.lower()
-            self.learn_prior  = args.learn_prior  
+            # self.posterior = nn.Sequential(
+            #                 nn.Linear(self.latent_dim*self.res*self.res, self.latent_dim*self.res*self.res),
+            #                 nn.GELU(),
+            #                 nn.Linear(self.latent_dim*self.res*self.res, 2*self.latent_dim*self.res*self.res),
+            #                 )
 
-            self.latent_dim = args.channels[-1]
-            self.res = res = int(args.enc_arch.split(',')[-1].split('b')[0])
 
             if args.zprior == 'gmm':
                 self.num_components = args.num_components
@@ -797,9 +946,7 @@ class SlotAutoEncoder(nn.Module):
                 else:
                     self.register_buffer("mu_p_z", torch.zeros(1, self.latent_dim, res, res))
                     self.register_buffer("logscale_p_z", torch.ones(1, self.latent_dim, res, res))
-           
 
-      
         
 
         # ========================================================
@@ -826,6 +973,32 @@ class SlotAutoEncoder(nn.Module):
         self.decoder = Decoder(args)
 
         # ========================================================
+
+
+        # Heirarchy setup
+        # self.eres = int(args.enc_arch.split(',')[-1].split('b')[0])
+        # if self.variational_latents and self.eres > 0:
+        #     self.heirarchy_projection = Block(
+        #                             args.channels[-1],
+        #                             bottleneck,
+        #                             2 * args.channels[-1],
+        #                             residual=False,
+        #                             version=args.vr,
+        #                         )
+                    
+        #     # 1x1 setup
+        #     if self.learn_prior:
+        #         self.mu_p_z1x1 = nn.Parameter(torch.zeros(1, self.latent_dim, 1, 1), 
+        #                                             requires_grad=True)
+        #         nn.init.xavier_normal_(self.mu_p_z1x1)
+
+        #         self.logscale_p_z1x1 = nn.Parameter(torch.ones(1, self.latent_dim, 1, 1), 
+        #                                             requires_grad=True)
+        #         nn.init.xavier_normal_(self.logscale_p_z1x1)
+        #     else:
+        #         self.register_buffer("mu_p_z1x1", torch.zeros(1, self.latent_dim, 1, 1))
+        #         self.register_buffer("logscale_p_z1x1", torch.ones(1, self.latent_dim, 1, 1))
+           
 
 
         if not self.no_additive_decoder:
@@ -905,16 +1078,40 @@ class SlotAutoEncoder(nn.Module):
 
     
     def get_latents(self, h: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        b, c, hs, ws = h.shape
 
+        kl_loss1x1 = 0
+
+        # heirarchy projection
+        # if self.eres > 1:
+        #     h1x1 = F.adaptive_avg_pool2d(h, output_size=(1, 1))
+        #     loc, logscale = self.heirarchy_projection(h1x1).chunk(2, dim=1)
+        #     z = loc + (logscale).exp()*torch.randn_like(loc)
+
+        #     kl_loss1x1 = gaussian_kl(loc, logscale, 
+        #                             self.mu_p_z1x1, 
+        #                             self.logscale_p_z1x1)
+        #     z = F.interpolate(z, size=(hs, ws))
+        #     h = z
+
+
+        # h = h.view(b, -1)
         loc, logscale = self.posterior(h).chunk(2, dim=1)
+        
+        # loc = loc.view(b, c, hs, ws)
+        # logscale = logscale.view(b, c, hs, ws)
+        
         z = loc + (logscale).exp()*torch.randn_like(loc)
+
 
         if self.zprior_type == 'gmm':
             kl_loss = self._mixture_kl_loss(z, loc, logscale)
         else:
-            kl_loss = gaussian_kl(loc, logscale, self.mu_p_z, self.logscale_p_z)
-
-        return z, loc, logscale, kl_loss
+            kl_loss = gaussian_kl(loc, logscale, 
+                                    self.mu_p_z, 
+                                    self.logscale_p_z)
+        
+        return z, loc, logscale, kl_loss, kl_loss1x1
 
 
 
@@ -942,14 +1139,19 @@ class SlotAutoEncoder(nn.Module):
         stats = []
         h_loc, h_logscale = None, None 
         if hasattr(self, 'posterior'):
-            h, h_loc, h_logscale, kl_loss = self.get_latents(h)
+            h, h_loc, h_logscale, kl_loss, kl_loss1x1 = self.get_latents(h)
             stats.append(dict(kl=kl_loss))
+
+            if not isinstance(kl_loss1x1, int):
+                stats.append(dict(kl=kl_loss1x1))
 
         if not (self.model == 'vae'):
             zs, attn, slot_kl_loss, _ = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
             stats.append(dict(kl=slot_kl_loss))
         else:
             zs = h
+
+
         xh = self.decoder(zs)
         if not self.no_additive_decoder:
             xh, recons, masks = self.slotpixel_competition(x.shape[0], xh)
@@ -962,8 +1164,6 @@ class SlotAutoEncoder(nn.Module):
             nll_pp = self.likelihood(xh, x)
         else:
             nll_pp = self.likelihood.nll(xh, x)
-
-
 
 
         if self.free_bits > 0:
@@ -1005,40 +1205,47 @@ class SlotAutoEncoder(nn.Module):
 
             return z_samples
 
-        if not (self.zprior_type == 'gmm'):
-            h = __vae_latents__()
-        else:
-            if self.num_components == 1:
+        if not hasattr(self.slot_attention, 'aggregate_posterior'):
+            if not (self.zprior_type == 'gmm'):
                 h = __vae_latents__()
-            
-            if not per_component:
-                l_p_c = torch.log_softmax(self.pi_p_c, dim=-1)
-                p_c = dist.one_hot_categorical.OneHotCategorical(logits=l_p_c)
-                c_samples = p_c.sample((nsamples * self.res * self.res, )).to(device)
-
-                loc = c_samples @ self.mu_p_z
-                scale = c_samples @ torch.exp(self.logscale_p_z)
-                pz_c = dist.Normal(loc=loc, scale=scale)
-                h = pz_c.sample().to(device)
-                h = h.view(nsamples, self.latent_dim, self.res, self.res)
             else:
-                c_samples = torch.tensor(np.eye(self.num_components, dtype=np.float32)).to(device)
-                loc = c_samples @ self.mu_p_z
-                scale = c_samples @ torch.exp(self.logscale_p_z)
-                pz_c = dist.Normal(loc=loc, scale=scale)
-                h = pz_c.sample((nsamples * self.res * self.res,))
-                h = h.view(nsamples, self.latent_dim, self.res, self.res)
+                if self.num_components == 1:
+                    h = __vae_latents__()
+                
+                if not per_component:
+                    l_p_c = torch.log_softmax(self.pi_p_c, dim=-1)
+                    p_c = dist.one_hot_categorical.OneHotCategorical(logits=l_p_c)
+                    c_samples = p_c.sample((nsamples * self.res * self.res, )).to(device)
 
-        h_loc = self.mu_p_z.repeat(nsamples, 1, 1, 1)
-        h_logscale = torch.exp(self.logscale_p_z).repeat(nsamples, 1, 1, 1) 
+                    loc = c_samples @ self.mu_p_z
+                    scale = c_samples @ torch.exp(self.logscale_p_z)
+                    pz_c = dist.Normal(loc=loc, scale=scale)
+                    h = pz_c.sample().to(device)
+                    h = h.view(nsamples, self.latent_dim, self.res, self.res)
+                else:
+                    c_samples = torch.tensor(np.eye(self.num_components, dtype=np.float32)).to(device)
+                    loc = c_samples @ self.mu_p_z
+                    scale = c_samples @ torch.exp(self.logscale_p_z)
+                    pz_c = dist.Normal(loc=loc, scale=scale)
+                    h = pz_c.sample((nsamples * self.res * self.res,))
+                    h = h.view(nsamples, self.latent_dim, self.res, self.res)
 
-        if not (self.model == 'vae'):
-            zs, attn_maps, _, slots = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
+            h_loc = self.mu_p_z.repeat(nsamples, 1, 1, 1)
+            h_logscale = torch.exp(self.logscale_p_z).repeat(nsamples, 1, 1, 1) 
+
+            if not (self.model == 'vae'):
+                zs, attn_maps, _, slots = self.slot_attention(h, h_loc, h_logscale, properties, num_slots)
+            else:
+                attn_maps = None
+                slots = None
+                zs = h
+
         else:
+            num_slots = self.num_slots if num_slots is None else num_slots 
+            slots = self.slot_attention.aggregate_posterior.sample([num_slots*nsamples])
+            slots = slots.view(nsamples, num_slots, -1)
+            zs = self.slot_attention.decoder_transformation(slots)
             attn_maps = None
-            slots = None
-            zs = h
-
 
         xh = self.decoder(zs)
         recons = None; masks = None
@@ -1054,6 +1261,8 @@ class SlotAutoEncoder(nn.Module):
         return self.likelihood.sample(xh, return_loc, t=t), recons, masks, attn_maps, slots
 
 
+
+    @torch.no_grad()
     def decode_slots(
         self, slots: Tensor,
         t: Optional[float] = None
@@ -1072,6 +1281,28 @@ class SlotAutoEncoder(nn.Module):
 
         return self.likelihood.sample(xh, t=t)[0]
 
+
+
+    @torch.no_grad()
+    def generate_slot_aggregate_posterior(
+                    self, latents: Tensor,
+                    routing_iters: Optional[int] = 10, 
+                    properties: Optional[Tensor] = None,
+                    num_slots: Optional[Tensor] = None
+            ):
+
+        h_loc, h_logscale = None, None 
+        if hasattr(self, 'posterior'):
+            latents, h_loc, h_logscale, _, _ = self.get_latents(latents)
+
+        self.slot_attention.generate_aggregate_posterior(latents,
+                                                            routing_iters,
+                                                            h_loc,
+                                                            h_logscale, 
+                                                            properties,
+                                                            num_slots)
+
+
     @torch.no_grad()
     def forward_latents(
         self, latents: Tensor, 
@@ -1083,7 +1314,7 @@ class SlotAutoEncoder(nn.Module):
         bs = latents.shape[0]
         h_loc, h_logscale = None, None 
         if hasattr(self, 'posterior'):
-            latents, h_loc, h_logscale, kl_loss = self.get_latents(latents)
+            latents, h_loc, h_logscale, _, _ = self.get_latents(latents)
 
 
         if not (self.model == 'vae'):

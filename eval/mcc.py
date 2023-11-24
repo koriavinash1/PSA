@@ -1,3 +1,28 @@
+import numpy as np
+import torch
+import torch.nn as nn
+import torchvision
+from PIL import Image
+from torch import Tensor
+import torch.nn.functional as F
+from torch.optim import AdamW, Optimizer
+from torch.utils.data import DataLoader, Dataset
+from typing import Callable, Optional, Tuple
+
+from torchvision import transforms
+from tqdm import tqdm
+
+from sklearn import cluster, datasets
+import matplotlib.pyplot as plt
+from scipy.stats import multivariate_normal
+
+import matplotlib
+matplotlib.rcParams.update({'font.size': 22})
+
+import sys
+
+sys.path.append('../eval')
+
 '''
 MCC python implementation
 
@@ -13,6 +38,9 @@ from scipy.stats import spearmanr
 import itertools 
 from sklearn.cross_decomposition import CCA
 
+import sklearn
+from sklearn.preprocessing import StandardScaler
+from sklearn import kernel_ridge
 
 def cca_mcc(rep1, rep2, n_components=2):
     cca = CCA(n_components=n_components)
@@ -380,9 +408,9 @@ def spearmanr_pt(x, y=None, rowvar=False):
 
 
 def mean_corr_coef_pt(x, y, 
-                    method='pearson', 
-                    return_ordered=False,
-                    affine_representations = True):
+                    method = 'spearman', 
+                    return_ordered = False,
+                    affine_transformation = True):
     """
     A differentiable pytorch implementation of the mean correlation coefficient metric.
 
@@ -402,66 +430,73 @@ def mean_corr_coef_pt(x, y,
 
     for i in range(b):
         # level 1 mcc accross slot index
-        x_ = x[i].t(); y_ = y[i].t() # d x k
+        x_ = x[i]; y_ = y[i] # k x d
+
+        cc = torch.norm(x_[:, None, :] - y_[None, :, :], dim = 2)
+
+        assign_idx, assignment = linear_sum_assignment(cc)
+        ny.append(torch.cat([y_[assignment[assign_idx[i]], :].view(1, -1) for i in range(k)], dim=0).unsqueeze(0))
+    
+    y = torch.cat(ny, dim=0) # ordered slots
+
+    # x = x.flatten(0, 1); y = ny.flatten(0, 1)
+        
+    ny = []
+    scores = []
+    reg_func = lambda: kernel_ridge.KernelRidge(kernel="rbf", alpha=1.0, gamma=None)
+
+    for sk in range(k):
+        x_ = x[:, sk].cpu().numpy() 
+        y_ = y[:, sk].cpu().numpy()
 
 
+        # Standardize latents
+        scaler_Z = StandardScaler()
+        scaler_hZ = StandardScaler()
+
+        # affine transformation
+        x_ = scaler_Z.fit_transform(x_)
+        y_ = scaler_Z.fit_transform(y_)
+        
+
+        # Fit KRR model
+        if affine_transformation:
+            z_train, z_eval = np.split(x_, [int(0.8 * len(x_))])
+            hz_train, hz_eval = np.split(y_, [int(0.8 * len(x_))])
+            reg_model = reg_func()
+            reg_model.fit(hz_train, z_train)
+            hz_pred_val = reg_model.predict(hz_eval)
+            
+            x_ = hz_pred_val
+            y_ = hz_eval 
+
+        
         if method == 'pearson':
-            cc = corrcoef_pt(x_, y_)[:k, k:]
+            cc = np.corrcoef(x_, y_, rowvar=False)[:d, d:]
         elif method == 'spearman':
-            cc = spearmanr_pt(x_, y_)[:k, k:]
+            cc = spearmanr(x_, y_)[0][:d, d:]
         else:
             raise ValueError('not a valid method: {}'.format(method))
-        cc = torch.abs(cc)
-        score, assignment, _ = auction_linear_assignment(cc, reduce='mean')
-
-        ny.append(torch.cat([y_[:, assignment[i]].view(1, -1) for i in range(k)], dim=0).unsqueeze(0))
+        cc = np.abs(cc)
+        xidx, assignment = linear_sum_assignment(-1 * cc)
+        score = cc[xidx, assignment].mean()
+        scores.append(score.item())
+        ny.append(torch.cat([y[:, sk, assignment[xidx[i]]][:, None] for i in range(d)], dim = 1)[:, None, :])
     
-    ny = torch.cat(ny, dim=0) # ordered slots
-
-    x = x.flatten(0, 1); oy = ny.flatten(0, 1)
-
-    y = oy.cpu().numpy()
-    if affine_representations:
-        cca = CCA(n_components=2)
-        cca.fit(x.cpu().numpy(), oy)
-        res_in = cca.transform(x, oy)
-        x = res_in[0]; y = res_in[1]
-        
-    
-    if method == 'pearson':
-        cc = np.corrcoef(x, y, rowvar=False)[:d, d:]
-    elif method == 'spearman':
-        cc = spearmanr(x, y)[0][:d, d:]
-    else:
-        raise ValueError('not a valid method: {}'.format(method))
-    cc = np.abs(cc)
-    score = cc[linear_sum_assignment(-1 * cc)].mean()
+    ny = torch.cat(ny, dim=1)
+    score = np.mean(scores)
 
     if return_ordered:
-        return score, oy
+        return score, ny 
 
     return score
 
 
-    # # level 2 mcc accross representation index
-    # if method == 'pearson':
-    #     cc = corrcoef_pt(x, y)[:d, d:]
-    # elif method == 'spearman':
-    #     cc = spearmanr_pt(x, y)[:d, d:]
-    # else:
-    #     raise ValueError('not a valid method: {}'.format(method))
-    # cc = torch.abs(cc)
-    # score, assignment, _ = auction_linear_assignment(cc, reduce='mean')
-    # if return_ordered:
-    #     return score, y
-    # else:
-    #     return score
-        
-
 
 def mean_corr_coef_np(x, y, 
-                    method='pearson',
-                    return_ordered=False):
+                    method = 'pearson',
+                    return_ordered = False,
+                    affine_transformation = True):
     """
     A numpy implementation of the mean correlation coefficient metric.
 
@@ -481,36 +516,65 @@ def mean_corr_coef_np(x, y,
 
     for i in range(b):
         # level 1 mcc accross slot index
-        x_ = x[i].T; y_ = y[i].T # d x k
+        x_ = x[i]; y_ = y[i] # k x d
+        cc = np.linalg.norm(x_[:, None, :] - y_[None, :, :], axis = 2)
 
-
-        if method == 'pearson':
-            cc = corrcoef_pt(x_, y_)[:k, k:]
-        elif method == 'spearman':
-            cc = spearmanr_pt(x_, y_)[:k, k:]
-        else:
-            raise ValueError('not a valid method: {}'.format(method))
-        cc = np.abs(cc)
-        score, assignment, _ = auction_linear_assignment(cc, reduce='mean')
-
-        ny.append(np.concatenate([y_[:, assignment[i]].view(1, -1) for i in range(k)], axis=0)[None, ...])
+        assign_idx, assignment = linear_sum_assignment(cc)
+        ny.append(np.concatenate([y_[assignment[assign_idx[i]], :][None, :] for i in range(k)], axis=0)[None, ...])
+    
     
     ny = np.concatenate(ny, axis=0) # ordered slots
 
     x = np.reshape(x, (b*k, d)); y = np.reshape(ny, (b*k, d))
 
+    ny = []
+    scores = []
+    reg_func = lambda: kernel_ridge.KernelRidge(kernel="rbf", alpha=1.0, gamma=None)
 
-    if method == 'pearson':
-        cc = np.corrcoef(x, y, rowvar=False)[:d, d:]
-    elif method == 'spearman':
-        cc = spearmanr(x, y)[0][:d, d:]
-    else:
-        raise ValueError('not a valid method: {}'.format(method))
-    cc = np.abs(cc)
-    score = cc[linear_sum_assignment(-1 * cc)].mean()
+    for sk in range(k):
+        x_ = x[:, sk].cpu().numpy() 
+        y_ = y[:, sk].cpu().numpy()
+
+
+        # Standardize latents
+        scaler_Z = StandardScaler()
+        scaler_hZ = StandardScaler()
+
+        # affine transformation
+        x_ = scaler_Z.fit_transform(x_)
+        y_ = scaler_Z.fit_transform(y_)
+        
+
+        # Fit KRR model
+        if affine_transformation:
+            z_train, z_eval = np.split(x_, [int(0.8 * len(x_))])
+            hz_train, hz_eval = np.split(y_, [int(0.8 * len(x_))])
+            reg_model = reg_func()
+            reg_model.fit(hz_train, z_train)
+            hz_pred_val = reg_model.predict(hz_eval)
+            
+            x_ = hz_pred_val
+            y_ = hz_eval
+
+            
+        
+        if method == 'pearson':
+            cc = np.corrcoef(x_, y_, rowvar=False)[:d, d:]
+        elif method == 'spearman':
+            cc = spearmanr(x_, y_)[0][:d, d:]
+        else:
+            raise ValueError('not a valid method: {}'.format(method))
+        cc = np.abs(cc)
+        xidx, assignment = linear_sum_assignment(-1 * cc)
+        score = cc[xidx, assignment].mean()
+        scores.append(score.item())
+        ny.append(np.concatenate([y[:, sk, assignment[xidx[i]]][:, None] for i in range(d)], axis=1)[:, None, :])
+    
+    ny = np.concatenate(ny, axis=1)
+    score = np.mean(scores)
 
     if return_ordered:
-        return score, y
+        return score, ny 
 
     return score
 
@@ -518,13 +582,13 @@ def mean_corr_coef_np(x, y,
 
 
 
-def slot_mean_corr_coef(x, y, method='pearson', return_ordered=False):
+def slot_mean_corr_coef(x, y, method='pearson', affine_transformation = True, return_ordered=False):
     if type(x) != type(y):
         raise ValueError('inputs are of different types: ({}, {})'.format(type(x), type(y)))
     if isinstance(x, np.ndarray):
-        return mean_corr_coef_np(x, y, method, return_ordered)
+        return mean_corr_coef_np(x, y, method, return_ordered, affine_transformation)
     elif isinstance(x, torch.Tensor):
-        return mean_corr_coef_pt(x, y, method, return_ordered)
+        return mean_corr_coef_pt(x, y, method, return_ordered, affine_transformation)
     else:
         raise ValueError('not a supported input type: {}'.format(type(x)))
 

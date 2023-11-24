@@ -24,9 +24,9 @@ clevr.pad = 4
 clevr.nslots = 7
 clevr.nconditions = 0
 clevr.max_num_obj = 7
-clevr.enc_arch = "64b1d2,32b1d2,16b1d2,8b1"
+clevr.enc_arch = "64b1d1,64b1d2,32b1d1,32b1"
 clevr.dec_arch = "8b1u2,16b1u2,32b1u2,64b1"
-clevr.channels = [16, 32, 64, 64]
+clevr.channels = [16, 32, 64, 128]
 # clevr.data_dir = os.path.join(HDF5_DATA_ROOT, 'clevr_10-full.hdf5')
 HPARAMS_REGISTRY["clevr"] = clevr
 
@@ -39,7 +39,7 @@ HPARAMS_REGISTRY["clevr_tex"] = clevr_tex
 
 clevr_hans3 = Hparams()
 clevr_hans3.update(clevr.__dict__)
-clevr_hans3.nconditions = 19
+clevr_hans3.nconditions = 3 # just x,y,z
 clevr_hans3.max_num_obj = 10
 clevr_hans3.nslots = 10
 clevr_hans3.data_dir = os.path.join(PNG_DATA_ROOT, 'CLEVR/CLEVR-Hans3')
@@ -388,4 +388,21 @@ def add_arguments(parser: argparse.ArgumentParser):
         type=str,
         default="no",
     )
+
+
+
+    parser.add_argument(
+        "--use_compositional_prior",
+        action="store_true",
+        default=False)
+    parser.add_argument(
+        "--compositional_conditioning",
+        type=str,
+        default='color_com')
+    parser.add_argument(
+        "--learn_cprior", 
+        help="learn/fix the prior distribution.",
+        action="store_true",
+        default=False)
+    
     return parser

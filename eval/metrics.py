@@ -16,8 +16,10 @@ from pytorch_fid import fid_score
 from sklearn.metrics import accuracy_score
 from mcc import slot_mean_corr_coef
 from torch.func import jacfwd
-from torchmetrics import R2Score
 
+import sklearn
+from sklearn.preprocessing import StandardScaler
+from sklearn import kernel_ridge
 
 def ari(
         true_mask: Tensor, 
@@ -119,29 +121,49 @@ def compositional_contrast(
     return cc
 
 
-def r2_score(
-    true_latents: Tensor, 
-    ordered_predicted_latents: Tensor, 
-) -> float:
+
+def r2_score(Z: torch.Tensor, hZ: torch.Tensor) -> np.ndarray:
     """
-    Calculates R2 score. Slots are flattened before calculating R2 score.
+    Computes matrix of R2 scores between all inferred and ground-truth latent slots
 
     Args:
-        true_latents: tensor of shape (batch_size, n_slots, n_latents)
-        predicted_latents: tensor of shape (batch_size, n_slots, n_latents)
-        indices: tensor of shape (batch_size, n_slots, 2) with indices of matched slots
+        Z: Tensor containing all ground-truth latents
+        hZ: Tensor containing all inferred latents, ordered wrt Z
 
     Returns:
-        avg_r2_score: average R2 score over all latents
+        numpy array of R2 scores of shape: [num_slots]
     """
+    num_slots = Z.shape[1]
 
-    # BK x d
+    Z = Z.permute(1, 0, 2).numpy()
+    hZ = hZ.permute(1, 0, 2).numpy()
 
-    predicted_latents = ordered_predicted_latents.detach().cpu()
-    true_latents = true_latents.detach().cpu()
+    # Initialize matrix of R2 scores
+    corr = np.zeros(num_slots)
 
-    r2 = R2Score(true_latents.shape[1], multioutput="raw_values")
-    r2_score_raw = r2(predicted_latents, true_latents)
-    r2_score_raw[torch.isinf(r2_score_raw)] = torch.nan
-    avg_r2_score = torch.nanmean(r2_score_raw).item()
-    return avg_r2_score
+    # 'hZ', 'Z' have shape: [num_slots, num_samples, slot_dim]
+
+    # Use kernel ridge regression to predict ground-truth from inferred slots
+    reg_func = lambda: kernel_ridge.KernelRidge(kernel="rbf", alpha=1.0, gamma=None)
+    for i in range(num_slots):
+        ZS = Z[i]
+        hZS = hZ[i]
+
+        # Standardize latents
+        scaler_Z = StandardScaler()
+        scaler_hZ = StandardScaler()
+
+        z_train, z_eval = np.split(scaler_Z.fit_transform(ZS), [int(0.8 * len(ZS))])
+        hz_train, hz_eval = np.split(
+            scaler_hZ.fit_transform(hZS), [int(0.8 * len(hZS))]
+        )
+
+        # Fit KRR model
+        reg_model = reg_func()
+        reg_model.fit(hz_train, z_train)
+        hz_pred_val = reg_model.predict(hz_eval)
+
+        # Populate correlation matrix
+        corr[i] = sklearn.metrics.r2_score(z_eval, hz_pred_val)
+
+    return corr.mean()

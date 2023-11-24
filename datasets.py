@@ -38,15 +38,19 @@ def get_paths_with_properties_CLEVR(root_path, mode, max_objects=7):
         
         objects = []
         for object_info in data_info['objects']:
-            object_property = np.eye(len(size_mapping))[size_mapping[object_info['size']]]
-            object_property = np.concatenate([object_property, 
-                            np.eye(len(shape_mapping))[shape_mapping[object_info['shape']]]])
-            object_property = np.concatenate([object_property, 
-                            np.eye(len(color_mapping))[color_mapping[object_info['color']]]])
-            object_property = np.concatenate([object_property, 
-                            np.eye(len(material_mapping))[material_mapping[object_info['material']]]])
-            object_property = np.concatenate([object_property, [1]])
-            object_property = np.concatenate([object_property, (np.array(object_info['3d_coords']) + 3.0)/6.0])
+            # object_property = np.eye(len(size_mapping))[size_mapping[object_info['size']]]
+            # object_property = np.concatenate([object_property, 
+            #                 np.eye(len(shape_mapping))[shape_mapping[object_info['shape']]]])
+            # object_property = np.concatenate([object_property, 
+            #                 np.eye(len(color_mapping))[color_mapping[object_info['color']]]])
+            # object_property = np.concatenate([object_property, 
+            #                 np.eye(len(material_mapping))[material_mapping[object_info['material']]]])
+            # object_property = np.concatenate([object_property, [1]])
+            # object_property = np.concatenate([object_property, (np.array(object_info['3d_coords']) + 3.0)/6.0])
+            # objects.append(object_property)
+
+
+            object_property = (np.array(object_info['3d_coords']) + 3.0)/6.0
             objects.append(object_property)
 
         for _ in range(max_objects - len(objects)):
@@ -99,9 +103,17 @@ class DataGenerator(Dataset):
             self.mask_dir = os.path.join(os.path.dirname(root), 'masks', mode)
             self.mask_names = os.listdir(self.mask_dir)
 
+        # initialize the cache
+        self.cache = {}
 
 
     def __getitem__(self, index):
+        
+        
+        if index in self.cache.keys():
+            sample = self.cache[index] 
+            return sample
+
         path = self.files[index]
         sample = {}
 
@@ -152,10 +164,6 @@ class DataGenerator(Dataset):
             property_info = torch.from_numpy(property_info)
             sample['properties'] = property_info
 
-
-
-
-
         # ====================================
         if self.class_info:
             if path.lower().__contains__('hans'):
@@ -185,6 +193,7 @@ class DataGenerator(Dataset):
 
             sample['y'] = target   
 
+        self.cache[index] = sample
         return sample
             
     
