@@ -60,10 +60,11 @@ def mse(
 
     if only_fg:
         not_bg = object_mask > 0
+        not_bg = not_bg.unsqueeze(1).repeat(1, 3, 1, 1)
         true_image = true_image[not_bg]
         reconstruction = reconstruction[not_bg]
     
-    return ((true_image - reconstruction)**2).mean([1, 2, 3]).mean()
+    return ((true_image - reconstruction)**2).mean()
 
 
 def slot_mcc(
@@ -134,7 +135,6 @@ def r2_score(Z: torch.Tensor, hZ: torch.Tensor) -> np.ndarray:
         numpy array of R2 scores of shape: [num_slots]
     """
     num_slots = Z.shape[1]
-
     Z = Z.permute(1, 0, 2).numpy()
     hZ = hZ.permute(1, 0, 2).numpy()
 

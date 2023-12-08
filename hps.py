@@ -23,10 +23,10 @@ clevr.input_res = 64
 clevr.pad = 4
 clevr.nslots = 7
 clevr.nconditions = 0
-clevr.max_num_obj = 7
+clevr.max_num_obj = 6
 clevr.enc_arch = "64b1d1,64b1d2,32b1d1,32b1"
 clevr.dec_arch = "8b1u2,16b1u2,32b1u2,64b1"
-clevr.channels = [16, 32, 64, 128]
+clevr.channels = [16, 32, 64, 64]
 # clevr.data_dir = os.path.join(HDF5_DATA_ROOT, 'clevr_10-full.hdf5')
 HPARAMS_REGISTRY["clevr"] = clevr
 

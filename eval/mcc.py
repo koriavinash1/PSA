@@ -525,15 +525,15 @@ def mean_corr_coef_np(x, y,
     
     ny = np.concatenate(ny, axis=0) # ordered slots
 
-    x = np.reshape(x, (b*k, d)); y = np.reshape(ny, (b*k, d))
+    # x = np.reshape(x, (b*k, d)); y = np.reshape(ny, (b*k, d))
 
     ny = []
     scores = []
     reg_func = lambda: kernel_ridge.KernelRidge(kernel="rbf", alpha=1.0, gamma=None)
 
     for sk in range(k):
-        x_ = x[:, sk].cpu().numpy() 
-        y_ = y[:, sk].cpu().numpy()
+        x_ = x[:, sk]
+        y_ = y[:, sk]
 
 
         # Standardize latents
@@ -582,7 +582,7 @@ def mean_corr_coef_np(x, y,
 
 
 
-def slot_mean_corr_coef(x, y, method='pearson', affine_transformation = True, return_ordered=False):
+def slot_mean_corr_coef(x, y, method='pearson', affine_transformation = False, return_ordered=False):
     if type(x) != type(y):
         raise ValueError('inputs are of different types: ({}, {})'.format(type(x), type(y)))
     if isinstance(x, np.ndarray):

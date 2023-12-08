@@ -31,6 +31,8 @@ from utils import preprocess_batch
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
+HDF5_DATA_ROOT = '/vol/biomedic3/agk21/CoSA/SAModelling/Datasets'
+PNG_DATA_ROOT = '/vol/biomedic2/agk21/PhDLogs/datasets/'
 
 @torch.no_grad()
 def main(opt: argparse.ArgumentParser):
@@ -41,6 +43,11 @@ def main(opt: argparse.ArgumentParser):
     config = torch.load(os.path.join(ckpt_dir, run_dirs[0], 'checkpoint.pt'))['hparams']
     hparams = Hparams()
     hparams.update(config)
+    hparams.batch_size = opt.batch_size
+    if hparams.niters > 0: hparams.niters = 1
+
+    if hparams.hps == 'clevr':
+        hparams.data_dir = os.path.join(HDF5_DATA_ROOT, 'clevr_10-full.hdf5')
 
     test_dataloader = setup_dataloaders(hparams)['test']
 
@@ -62,7 +69,7 @@ def main(opt: argparse.ArgumentParser):
             model.load_state_dict(ckpt['model_state_dict'])
 
         model.eval()
-        cpu_model = copy.deepcopy(model)
+        # cpu_model = copy.deepcopy(model)
         model.to(opt.device)
 
         logs = {
@@ -81,10 +88,10 @@ def main(opt: argparse.ArgumentParser):
 
 
         for i, batch in tqdm(enumerate(test_dataloader), desc=f'Computing metrics for Run-{ir}'):
-            if i > 100: break
+            # if i > 10: break
 
             batch = preprocess_batch(hparams, batch)
-            bs = batch["x"].shape[0]
+            bs, c, h, w = batch["x"].shape
 
             if 'properties' not in batch.keys():
                 batch['properties'] = None
@@ -104,8 +111,24 @@ def main(opt: argparse.ArgumentParser):
                 # compute ari
                 slot_mask = masks.argmax(dim = 1).squeeze(1) # B x 1 x H x W
                 gt_mask = batch['mask'].argmax(dim = 1).squeeze(1)
-                eval_metrics['ari'] += ari(gt_mask, slot_mask, 1)
-            
+                eval_metrics['ari'] += ari(gt_mask, slot_mask.detach().cpu(), 1)
+                # 
+            elif hparams.no_additive_decoder and ('mask' in batch.keys()):
+                # compute ari
+
+                _, kslots, ntokens = attn.shape 
+                attn = attn * attn.sum(-1, keepdim = True)
+                attn = attn.view(bs, kslots, 
+                                    int(ntokens**0.5), 
+                                    int(ntokens**0.5))
+                _,_, h_enc, w_enc = attn.shape
+
+                attn = attn.repeat_interleave(h // h_enc, dim=-2).repeat_interleave(w // w_enc, dim=-1)
+                
+                slot_mask = attn.argmax(dim = 1).squeeze(1) # B x 1 x H x W
+                gt_mask = batch['mask'].argmax(dim = 1).squeeze(1)
+                eval_metrics['ari'] += ari(gt_mask, slot_mask.detach().cpu(), 1)
+
 
             eval_metrics['mse_full'] += mse(batch['x'], x_rec, only_fg = False)
             if 'mask' in batch.keys(): eval_metrics['mse_fg']   += mse(batch['x'], x_rec, gt_mask, only_fg = True)
@@ -113,7 +136,7 @@ def main(opt: argparse.ArgumentParser):
 
 
             # append latents for mcc calculation
-            logs['initial_slots'].append(init_slots.detach().cpu())
+            if not (init_slots is None): logs['initial_slots'].append(init_slots.detach().cpu())
             logs['final_slots'].append(final_slots.detach().cpu())
 
 
@@ -153,7 +176,7 @@ def main(opt: argparse.ArgumentParser):
                         torchvision.utils.save_image(slot, os.path.join(recon_slots_path, f'{filename}-{islot}.png'))
  
 
-            if hparams.model in ['VSA', 'VASA', 'SSA', 'SSAU']:
+            if (hparams.model in ['VAE', 'VSA', 'VASA', 'SSA', 'SSAU']) or (hparams.EM_slots.split('_')[0].lower() == 'yes'):
                 composition_img_path = os.path.join(fid_dir, 'composition_img')
                 os.makedirs(composition_img_path, exist_ok=True)
 
@@ -161,15 +184,17 @@ def main(opt: argparse.ArgumentParser):
                     sampled_slot_path = os.path.join(fid_dir, 'sampled_slots')
                     os.makedirs(sampled_slot_path, exist_ok=True)
 
+                
+                if (hparams.EM_slots.split('_')[0].lower() == 'yes'):
+                    model.generate_slot_aggregate_posterior(latents = zs, 
+                                                properties = batch['properties'])
+
+
 
                 (x_comp, _), recons, masks, attn, (sampled_init_slots, sampled_final_slots) = model.sample(bs, 
                                                                         device = opt.device, 
                                                                         properties = batch['properties'], 
                                                                         return_loc=True)
-
-                logs['compositional_initial_slots'].append(sampled_init_slots.detach().cpu())
-                logs['compositional_final_slots'].append(sampled_final_slots.detach().cpu())
-
 
                 for k in range(bs):
                     filename = str(k + i * bs)
@@ -195,7 +220,7 @@ def main(opt: argparse.ArgumentParser):
             eval_metrics['slot_fid'] = calculate_fid(real_slots_path, recon_slots_path)
 
 
-        if hparams.model in ['VSA', 'VASA', 'SSA', 'SSAU']:
+        if (hparams.model in ['VAE', 'VSA', 'VASA', 'SSA', 'SSAU']) or (hparams.EM_slots.split('_')[0].lower() == 'yes'):
             eval_metrics['model_compositional_fid'] = calculate_fid(recon_img_path, composition_img_path)
             eval_metrics['true_compositional_fid'] = calculate_fid(real_img_path, composition_img_path)
 
@@ -211,11 +236,22 @@ def main(opt: argparse.ArgumentParser):
             if len(logs[key]): 
                 logs[key] = torch.cat(logs[key], 0)
 
-                mcc_score, r2_ = 0.0, 0.0
-                if len(run_logs):
-                    mcc_score, ordered_z = slot_mean_corr_coef(run_logs[-1][key], logs[key], return_ordered = True)
-                    r2_ = r2_score(run_logs[-1][key].flatten(0, 1), ordered_z)
+                mcc_score, affinemcc_score, r2_ = 0.0, 0.0, 0.0
 
+                if len(run_logs):
+                    mcc_score, ordered_z = slot_mean_corr_coef(run_logs[-1][key], 
+                                                                logs[key],
+                                                                affine_transformation = False, 
+                                                                return_ordered = True)
+
+                    affinemcc_score, _ = slot_mean_corr_coef(run_logs[-1][key], 
+                                                                logs[key],
+                                                                affine_transformation = True, 
+                                                                return_ordered = True)
+
+                    r2_ = r2_score(run_logs[-1][key], ordered_z)
+
+                eval_metrics['SMCC_Affine_' + key] = affinemcc_score
                 eval_metrics['SMCC_' + key] = mcc_score
                 eval_metrics['R2_' + key]   = r2_ 
 
@@ -233,14 +269,14 @@ def main(opt: argparse.ArgumentParser):
 
         tmp = []
         for ii in range(len(metric_logs)):
-            if metric_logs[ii][metric] == 0.0:
+            if metric_logs[ii][metric] > 0.0:
                 tmp.append(metric_logs[ii][metric])
-        mean = np.mean(tmp); var = np.var(tmp)
+        mean = np.mean(tmp); std = np.std(tmp)
 
         return_metrics[metric + '_mean'] = float(mean)
-        return_metrics[metric + '_var'] = float(var)
+        return_metrics[metric + '_std'] = float(std)
 
-    return return_metrics, metric_logs
+    return return_metrics, metric_logs, hparams.niters
 
 
 
@@ -253,7 +289,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', 
-                        default=16, 
+                        default=100, 
                         type=int)
     parser.add_argument('--use_ema_model',
                         action="store_true",
@@ -266,13 +302,13 @@ if __name__ == '__main__':
 
     import json
 
-    return_metrics, metric_logs = main(opt)
+    return_metrics, metric_logs, niters = main(opt)
 
     metric_logs = {f'Run-{i}': {k: float(v) for k, v in info.items()} for i, info in enumerate(metric_logs)}
 
-    with open(os.path.join(opt.checkpoint_dir, 'final_logs.json'), 'w') as json_file:
+    with open(os.path.join(opt.checkpoint_dir, f'final_logs_{niters}.json'), 'w') as json_file:
         json.dump(return_metrics, json_file, indent=4)
     
-    with open(os.path.join(opt.checkpoint_dir, 'run_logs.json'), 'w') as json_file:
+    with open(os.path.join(opt.checkpoint_dir, f'run_logs_{niters}.json'), 'w') as json_file:
         json.dump(metric_logs, json_file, indent=4)
     

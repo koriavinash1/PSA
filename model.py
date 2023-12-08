@@ -595,6 +595,7 @@ class SlotAttentionWithPositions(nn.Module):
         sigma_initial = torch.var(tokens, dim=1, keepdim=True) + self.eps # B, 1, d
         sigma_initial /= (num_slots**(1/d))
 
+        attn = torch.ones(tokens.shape[0], num_slots, tokens.shape[1], device = slots.device, dtype = slots.dtype)
 
         for _ in range(routing_iters):
             if self.EM_type == 'dynamic':
@@ -662,9 +663,12 @@ class SlotAttentionWithPositions(nn.Module):
         return recon_combined, recons, masks
 
 
-    def decoder_transformation(self, slots: Tensor) -> Tensor:
+    def decoder_transformation(self, slots: Tensor, pi: Optional[Tensor] = None) -> Tensor:
         # features: B x nslots x dim
-        B, _, _ = slots.shape
+        B, K, d = slots.shape
+
+        if pi is None:
+            pi = torch.ones_like(slots)/K
 
         slots = slots.reshape((-1, slots.shape[-1])).unsqueeze(2).unsqueeze(3) # (B*nslots) x dim
         features = slots.repeat((1, 1, self.init_spatial_resolution, self.init_spatial_resolution))
@@ -673,6 +677,11 @@ class SlotAttentionWithPositions(nn.Module):
         if self.no_additive_decoder:
             features = self.decode(features)
             features, _, _ = self.slotfeature_competition(B, features)
+
+            # features = features.view(B, K, d, self.init_spatial_resolution, self.init_spatial_resolution)
+            # features = features * pi.unsqueeze(-1).unsqueeze(-1)
+
+            # features = features.sum(dim = 1)
 
         return features
 
@@ -742,8 +751,8 @@ class SlotAttentionWithPositions(nn.Module):
             sigma = (1 / Nk) * torch.sum(attn.unsqueeze(-1) * (k.unsqueeze(1) - \
                                                         self.to_q(slots).unsqueeze(2))**2, dim=2) # (B, K, D)
         else:
-            sigma = (sigma_initial + torch.sum(attn.unsqueeze(-1) * (k.unsqueeze(1) - \
-                                        slots_prev.unsqueeze(2)) ** 2, dim=2)) / (Nk + 2*d + 4)  # (B, K, D)
+            sigma = (self.to_q(sigma_initial) + torch.sum(attn.unsqueeze(-1) * (k.unsqueeze(1) - \
+                                        self.to_q(slots_prev.unsqueeze(2))) ** 2, dim=2)) / (Nk + 2*d + 4)  # (B, K, D)
     
             
         sigma = torch.sqrt(sigma) + self.eps
@@ -848,15 +857,16 @@ class SlotAttentionWithPositions(nn.Module):
 
         initial_slots = slots.clone()
 
+        pi = torch.ones(b, num_slots, 1, device = slots.device, dtype = slots.dtype)/num_slots
+
         if self.EM:
-            pi = torch.ones(b, num_slots, 1, device = slots.device, dtype = slots.dtype)/num_slots
             sigma = init_slot_logscale.squeeze().unsqueeze(1).repeat(1, num_slots, 1)
             sigma = sigma.exp() + self.eps
 
             sigma_initial = torch.var(tokens, dim=1, keepdim=True) + self.eps # B, 1, d
             sigma_initial /= (num_slots**(1/d))
 
-
+        attn = torch.ones(tokens.shape[0], num_slots, tokens.shape[1], device = slots.device, dtype = slots.dtype)
         for _ in range(self.niters):
             if not self.EM:
                 slots, attn = self.step(slots, k, v)    
@@ -884,7 +894,7 @@ class SlotAttentionWithPositions(nn.Module):
         #     slots = slots + sigma * torch.randn_like(slots)
 
 
-        return self.decoder_transformation(slots), attn, slot_loss, (initial_slots, slots)
+        return self.decoder_transformation(slots, pi), attn, slot_loss, (initial_slots, slots)
 
 
 class SlotAutoEncoder(nn.Module):
@@ -1243,9 +1253,14 @@ class SlotAutoEncoder(nn.Module):
         else:
             num_slots = self.num_slots if num_slots is None else num_slots 
             slots = self.slot_attention.aggregate_posterior.sample([num_slots*nsamples])
+            pi = self.slot_attention.aggregate_posterior.log_prob(slots)
+
             slots = slots.view(nsamples, num_slots, -1)
-            zs = self.slot_attention.decoder_transformation(slots)
+            pi = pi.view(nsamples, num_slots, -1)
+
+            zs = self.slot_attention.decoder_transformation(slots, pi = pi)
             attn_maps = None
+            slots = (None, slots)
 
         xh = self.decoder(zs)
         recons = None; masks = None
@@ -1256,7 +1271,7 @@ class SlotAutoEncoder(nn.Module):
 
 
         if not isinstance(self.likelihood, DGaussNet):
-            return (xh, _), recons, masks, attn_maps, slots
+            return (xh, None), recons, masks, attn_maps, slots
 
         return self.likelihood.sample(xh, return_loc, t=t), recons, masks, attn_maps, slots
 

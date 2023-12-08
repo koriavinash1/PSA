@@ -1,26 +1,27 @@
 #!/bin/bash
 
+echo "EM with additive decoder model"
+
 # tetrominoes, clevr_tex, objects_room, multidsprites, clevr
 for HPS in clevr #_tex tetrominoes objects_room multidsprites
 do
-    LOGSDIR="/vol/biomedic3/agk21/CoSA/SAModelling/EMLOGS-RandomSeeds/$HPS"
+    LOGSDIR="/vol/biomedic3/agk21/CoSA/SAModelling/ICML-RUNS-RandomSeeds/$HPS"
 
     for MODEL in SA
     do
-        for RUN in 1 # 2 3
+        for RUN in 5 6 7 8
         do
-        
             RUNCMD="/vol/biomedic3/agk21/CoSA/SAModelling/main.py \
-                    --exp_name $MODEL-EM-aggregate-posterior \
+                    --exp_name EM-model \
                     --model $MODEL \
                     --hps $HPS \
                     --ckpt_dir $LOGSDIR \
                     --x_like shared_dgauss \
-                    --std_init 1.0 \
+                    --std_init 0.10 \
+                    --niters 5 \
                     --learning_rate 0.0002 \
                     --run_idx $RUN \
-                    --EM_slots yes_fixed_mle \
-                    --learn_prior"
+                    --EM_slots yes_fixed_map"
             echo $RUNCMD
             CUDA_VISIBLE_DEVICES=0 python $RUNCMD
 

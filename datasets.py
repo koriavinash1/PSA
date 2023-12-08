@@ -296,6 +296,9 @@ class HDF5Loader(Dataset):
         print ('all data loaded')
         self._filter_to_max_objects()
 
+        # initialize the cache
+        self.cache = {}
+
         # print (len(self.data['image']))
 
     def _filter_to_max_objects(self):
@@ -367,6 +370,16 @@ class HDF5Loader(Dataset):
 
     def __getitem__(self, index) -> Dict:
         index = self.condition[index]
+
+
+        if hasattr(self, 'data') and (len(self.cache.keys()) == len(self.condition)):
+            del self.data
+
+
+        if index in self.cache.keys():
+            out = self.cache[index] 
+            return out
+
         out = {}
         for feature_name in self.data.keys():
             out[feature_name] = self._preprocess_feature(
@@ -385,6 +398,7 @@ class HDF5Loader(Dataset):
         out['x'] = out['image']
         out['y'] = out['mask']
 
+        self.cache[index] = out
         return out
         
 
